@@ -12,13 +12,15 @@
     "dist",
     "README.md",
     "SKILL.md",
-    "server.json"
+    "server.json",
+    "openapi.json"
   ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build && node scripts/release-check.mjs"
+    "prepublishOnly": "npm run build && node scripts/release-check.mjs",
+    "generate:openapi": "tsx scripts/generate-openapi.ts"
   },
   "engines": {
     "node": ">=18"
@@ -30,7 +32,8 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "zod-to-json-schema": "^3.25.2"
   },
   "keywords": [
     "mcp",

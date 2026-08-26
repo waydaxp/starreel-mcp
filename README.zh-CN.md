@@ -93,6 +93,13 @@ env = { "STARREEL_API_KEY" = "srk_live_xxx" }
 - 视频报价 == 实际扣费(同一函数);终拼(成片)免费。
 - API key 只存哈希;换取的是 15 分钟短期令牌;泄露在设置页吊销即失效,不影响网页登录。
 
+## REST API(OpenAPI)
+
+想直接裸调 REST?整个产线门面见 [`openapi.json`](./openapi.json)
+(OpenAPI 3.1,100+ 操作,从本包工具面生成,operationId 与 MCP 工具名一一对应)。
+在线渲染版:[waydaxp.github.io/starreel-mcp](https://waydaxp.github.io/starreel-mcp/);
+也可用它给任意语言生成带类型客户端(如 `npx openapi-typescript`)。
+
 ## 环境变量
 
 | 变量 | 必填 | 默认 |

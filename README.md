@@ -168,9 +168,23 @@ npx skills add waydaxp/starreel-mcp
 | `STARREEL_API_KEY` | ✅ | — |
 | `STARREEL_AUTH_BASE` | | `https://api.shortreelai.com` |
 
+## REST API (OpenAPI)
+
+Prefer plain REST? The full production facade is described in
+[`openapi.json`](./openapi.json) (OpenAPI 3.1, 100+ operations — generated from
+this package's tool surface, so `operationId`s match MCP tool names 1:1).
+Browse it rendered at
+[waydaxp.github.io/starreel-mcp](https://waydaxp.github.io/starreel-mcp/), or
+generate a typed client for any language:
+
+```bash
+npx openapi-typescript https://raw.githubusercontent.com/waydaxp/starreel-mcp/main/openapi.json -o starreel.d.ts
+```
+
 ## Links
 
 - Website: [starreel.ai](https://starreel.ai)
+- API reference (OpenAPI): [waydaxp.github.io/starreel-mcp](https://waydaxp.github.io/starreel-mcp/)
 - Full MCP / REST docs: [api.shortreelai.com/docs/mcp](https://api.shortreelai.com/docs/mcp)
 - npm: [@starreel/mcp](https://www.npmjs.com/package/@starreel/mcp)
 - 中文文档: [README.zh-CN.md](./README.zh-CN.md)

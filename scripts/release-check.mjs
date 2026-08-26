@@ -26,6 +26,14 @@ if (existsSync(pluginManifest)) {
   const plug = JSON.parse(readFileSync(pluginManifest, 'utf8'))
   if (plug.version && plug.version !== pkg.version) fail(`版本漂移:plugin.json=${plug.version} ≠ package.json=${pkg.version}`)
 }
+// openapi.json 若存在也必须同版本(防 spec 陈旧发包;重生成 = npm run generate:openapi)
+const specPath = join(ROOT, 'openapi.json')
+if (existsSync(specPath)) {
+  const spec = JSON.parse(readFileSync(specPath, 'utf8'))
+  if (spec?.info?.version !== pkg.version) {
+    fail(`openapi.json 陈旧:info.version=${spec?.info?.version} ≠ package.json=${pkg.version}(先 npm run generate:openapi)`)
+  }
+}
 
 // ② dist 新鲜:dist 最新 mtime 不得早于 src 最新 mtime(prepublishOnly 先跑 build,此闸兜底手滑)
 function latestMtime(dir) {

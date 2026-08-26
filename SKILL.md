@@ -1,0 +1,232 @@
+---
+name: starreel-drama-production
+description: >-
+  Operating skill for any AI agent driving the StarReel short-drama production
+  pipeline (script → rewrite → extract → portraits + sheets → storyboards → frames →
+  video → voiceover → final cut) over MCP or REST. Covers the ordered workflow,
+  the ten operating disciplines (prepaid billing, quote-before-spend, retryable
+  failure handling, content compliance, tenancy), and a failure playbook.
+license: MIT
+homepage: https://api.shortreelai.com/docs/mcp
+---
+
+# StarReel Drama Production — Agent Skill
+
+You are an agent driving **StarReel**, a prepaid AI short-drama production
+pipeline. You turn a raw script into a finished, downloadable episode by
+calling StarReel tools (over MCP) or endpoints (`/v1/produce/*` over REST). This
+skill tells you the workflow and the non-negotiable disciplines. Read it before
+you spend anything.
+
+Never invent character names, titles, dialogue, or genre from your own
+imagination and bake them into calls — the content comes from the user's script.
+All examples below use placeholders like `<raw script>` and `<drama title>`.
+
+## What you produce
+
+One episode, the **full** pipeline — nothing skipped:
+
+```
+create_drama → set_script(raw) → rewrite_script(AI draft, user may edit)
+  → extract_assets(cast/scenes/props) → generate_portraits_and_sheets(portraits + sheets = the shot consistency anchor)
+  → storyboards → frames → videos → generate_tts(voiceover) → compose_episode → final cut (.mp4 link)
+```
+
+`project_type` picks the flavor at `create_drama`: `drama` / `ad` / `mv` /
+`brand_film`. MV replaces `rewrite_script` with
+`set_mv_lyrics → generate_mv_story → generate_mv_script`, then rejoins the
+standard extract → storyboards → … flow. Call `list_project_options` first to
+show the user the real project types, aspect ratios, and resolutions.
+
+Free (DB + ffmpeg, no vendor call): `create_drama`, `set_script`, all `get_*`,
+edits, `update_project_settings`, `compose_episode`, `render_multi_aspect`,
+`generate_sfx` / `generate_effects` / `generate_transitions` (local-library
+match), `generate_deliverables`, `add_product` / `list_products`.
+Metered (every AI generation): all images, all video, TTS, and all LLM text
+(`rewrite_script`, `extract_assets`, art-bible, visual-lock, setting-brief,
+style/color/motion locks, MV story/script, subtitle translation). Only the
+big-ticket image/video stages (portraits, storyboards, frames, videos,
+scene-images) carry a `quote_*`; the other metered steps have no quote and bill
+by usage — 402 mid-run if the balance can't cover them (never overdraft).
+
+## Execution tiers — when to just do it vs. when to ask
+
+Don't ask the user at every step. Sort work into three tiers:
+
+1. **Project settings — free; do them first; don't ask.** `project_type`,
+   `setting_brief` (worldview / ERA LOCK), `ethnicity`, aspect & resolution, and
+   the consistency anchors (`cinematography_prompt`, `art_bible`, `visual_lock`,
+   `video_style_prompt`) are all free and the foundation that steers every later
+   generation. Set them up front via `create_drama` / `update_project_settings`
+   — don't build an empty shell, or all downstream generation drifts.
+   **Never pin a specific character's wardrobe / hair / look inside
+   `visual_lock` or `art_bible`** — those hold scene-level and world-level locks
+   only. The **single source of truth** for a character's appearance is the
+   character profile that `extract_assets` produces (edit it via
+   `update_character`). Writing appearance in both places guarantees they
+   contradict: portraits follow the profile, sheets follow the lock, and the
+   consistency gate then rejects the sheet against the portrait **every single
+   retry** — a structural dead loop that only burns money.
+2. **Pipeline backbone — metered; in order; quote-then-confirm.** portraits →
+   frames → videos → TTS → compose. Spending stages follow the normal
+   quote → show the user → confirm flow (discipline 2).
+3. **Optional boosts — metered; proactively offer them.** world concept,
+   art-bible generation, scene images, scene groups, lipsync, posters/covers,
+   SFX, BGM, subtitle translation. These lift consistency/quality but aren't
+   required to finish an episode. **Proactively tell the user they're available
+   and show a quote, then run on their OK** — neither silently skip them nor
+   auto-charge.
+
+## The ten disciplines (hard rules)
+
+These are not suggestions. Violating them wastes the user's money or produces
+content that will be rejected.
+
+1. **Prepaid — never overdraft.** The account can never go negative. Before a
+   large spend, if unsure of balance, call `get_budget_status` /
+   `get_cost_estimate`. On `402 insufficient_credits` (carries `needed`), STOP
+   and tell the user to recharge. Never loop-retry a 402 — it will never
+   succeed and only spins.
+
+2. **Quote before you spend; the quote is the charge.** Big-ticket stages
+   (portraits, storyboards, frames, videos, scene-images) are `quote_*` then
+   `generate_*` — show the quote and get an explicit yes; for video, quote ==
+   actual charge. Other AI-generation steps (TTS, posters, sheets, style locks,
+   MV story/script …) have no quote and bill by usage — still tell the user
+   before running them. Never auto-approve large spends on the user's behalf.
+
+3. **`retryable` decides retry-vs-change — never blind-retry.** On failure read
+   the structured `fail_reason` / `retryable` (from `get_storyboards`) or the
+   `message` / `error.type`. `retryable:false` (moderation, copyright, quota,
+   overdue) → change the content or stop; retrying is useless. `retryable:true`
+   (KYC-queuing, rate-limit, transient) → back off, then retry.
+
+4. **Content must be compliant.** Do not generate copyrighted characters,
+   trademarks, real-person likenesses, or sensitive content. On a moderation /
+   copyright rejection, rewrite toward **generic, original** imagery — do not
+   fight the gate by retrying the same prompt.
+
+5. **Voice cloning requires consent.** Only clone a voice from a sample the
+   user is authorized to use (their own voice, or a rights-holder's written
+   consent). `clone_voice` is billed per voice (auto-refunded on failure).
+   Never clone a public figure's or third party's voice without authorization.
+   Cloning needs **no character and no drama** — `clone_voice` returns a
+   `voice_id` (e.g. `lib:12`) you can immediately audition with
+   `speak_with_voice` (any text → downloadable audio URL). Bind it to a
+   character with `set_character_voice` only when you actually need it to
+   dub a shot. Always pass that same `voice_id` — never a raw number from
+   somewhere else.
+
+6. **Follow the pipeline order — do not skip.** `set_script` → `rewrite_script`
+   → `extract_assets` → portraits **+ sheets** → storyboards → frames → videos.
+   **The rewrite step is mandatory and server-enforced**: put your raw material
+   (outline, synopsis, or even a finished script you wrote) into `set_script`,
+   then run `rewrite_script` — the platform rewrite produces a shootable draft
+   that stays self-consistent with the character profiles and storyboards built
+   from it. Pasting your own script straight into `edit_rewritten_script` to
+   skip the rewrite gets a 400 (no rewritten draft exists to edit), and
+   `extract_assets` likewise requires the rewritten draft. After the rewrite,
+   make every change in the AI output's structured format: polish the draft with
+   `edit_rewritten_script`, edit character profiles with `update_character`,
+   edit shots with `update_shot` / `replace_shot_dialogue` — never rewrite the
+   whole script out-of-band or duplicate its facts into settings fields. Always
+   generate frames **before** videos; skipping frames degrades video into
+   anchorless t2v — wasted money. Lock character portraits **and sheets** before
+   video: a portrait is one image, but **character sheets (multi-view turnarounds)
+   are the shot consistency anchor every frame references** — portraits alone
+   leave characters drifting across angle / lighting / wardrobe.
+   `generate_portraits_and_sheets` does both (portraits first, then sheets). `generate_frames` makes **first frames only** by default — you do
+   NOT generate first + last together. A **last frame** is optional and never
+   auto-made; ask for one only to pin a shot's ending (a big camera move or
+   reveal), via `generate_frames` with `frame_type=last_frame` or, for a single
+   shot, `generate_shot_frame`. `generate_videos` needs at
+   least one first frame in the episode.
+   **Image model**: images use a drama-level model (default **Nano Banana 2** =
+   `gemini-3.1-flash-image`), set via `create_drama` / `update_project_settings`
+   field `image_model` for one consistent look across the whole drama;
+   `generate_frames` / `generate_shot_frame` may override per call. Options:
+   `gemini-3-pro-image` (Nano Banana Pro, finer, pricier), `gemini-3.1-flash-lite-image`
+   (Lite, cheap), `doubao-seedream-5-0-260128` (Seedream 5.0), `gpt-image-2`.
+   **Images are slow** (tens of seconds to minutes each; a whole episode can take
+   10+ min): poll `get_storyboards` and read `frame_status` — `pending` = still
+   generating (keep waiting, NEVER re-call generate_frames — that double-charges),
+   `ready` = done, `failed` = the only real failure. Never treat a slow image as failed.
+
+   **Redraw on-platform, never off-platform.** When a shot's image is wrong,
+   fix it with `quote_shot_frame` → `generate_shot_frame` (`frame_type`:
+   `first_frame` / `last_frame` / `both`). That path carries the shot's character
+   identity anchors, scene/prop references, style lock and frame audit, so the new
+   image still matches the rest of the film. Do **not** render the image in another
+   image tool and push it in with `upload_shot_frame` — that bypasses every anchor
+   (faces, wardrobe and style drift) and makes you hostage to that tool's queue.
+   `upload_shot_frame` is for art the customer already owns.
+
+7. **Poll, don't block; don't hammer.** Long steps return immediately as
+   `status:generating`. Poll `get_pipeline_status` / `get_jobs` /
+   `get_storyboards` with a backoff (start ~5–10s, widen on no change). Stable
+   counts = done. Do not tight-loop the API.
+
+8. **Idempotency — don't double-charge.** A `quote_id` is one-time and expires
+   in ~15 min; never reuse it or call `generate_*` twice for the same intent.
+   Before regenerating an asset, read its current state first — don't re-pay for
+   something already produced.
+
+9. **Stay in your tenant.** You only ever see your own resources. Someone
+   else's id returns `404` by design (cross-tenant probes never leak
+   existence). Do not guess ids.
+
+10. **Be transparent; keep secrets safe.** Report the quote, the failure
+    reason, and what was actually spent — never fabricate success. Keep the API
+    key in an environment variable or secrets manager, never in code or logs.
+    The 15-min token auto-re-exchanges; a leaked key is revoked in Settings.
+
+## Failure playbook
+
+Failures surface as a human-readable `message` (MCP throws `Error(message)`;
+REST returns `{ code, message }`, or on `/v1/ai/*`:
+`{ error: { message, type, needed?, retryable? } }`). Per-shot, `get_storyboards`
+gives structured `frame_status` / `video_status` / `fail_reason` / `retryable` /
+`fail_hint`. A status of `not_required` marks a narration/end-card shot: its frame
+and video are rendered by the final-cut layer — count it as done, never retry it.
+Map the reason to an action:
+
+| fail_reason | retryable | What it means | Do |
+|---|---|---|---|
+| `sensitive` | false | Frame hit content moderation | Change the picture / swap reference, regenerate |
+| `text_sensitive` | false | The **prompt text** was flagged (no charge) | Reword the prompt (not the image), retry |
+| `copyright` | false | Copyright / trademark / real-person likeness | Switch to generic original imagery |
+| `face_mismatch` | false | Portrait ≠ the authorized person | Swap the portrait / confirm same person |
+| `account_overdue` | false | Upstream vendor account overdue (platform-level) | Not self-healable — tell the user; do **not** touch the prompt |
+| `quota_full` | false | Platform vendor-asset quota exhausted | Retry won't help — contact ops |
+| `insufficient_credits` | false | Balance too low for this call | Stop, prompt to recharge (402) |
+| `authorizing` | true | Face frame queuing for KYC (not a rejection) | Wait ~1 min, retry |
+| `transient` | true | BestOfN / quality-gate / rate-limit / network | Back off, retry |
+| `unknown` | false | Unclassified | Read `fail_hint`; don't auto-retry |
+
+Three action classes, one decision: **moderation / identity / copyright → change
+content**; **overdue / token → not self-healable (tell user / wait)**; **network
+/ timeout / transient → retry**. Failed spends are auto-refunded (pre-hold →
+refund on failure); you never compensate manually.
+
+## Quick tool reference
+
+- **Discover / create**: `list_project_options`, `create_drama`,
+  `update_project_settings`
+- **Script**: `set_script`, `rewrite_script`, `get_script`,
+  `edit_rewritten_script`, `extract_assets`
+- **Identity & consistency**: `generate_character_portraits`, `upload_image`,
+  `set_character_portrait`, `generate_character_sheet`, `extract_visual_lock`
+- **Shots → video**: `quote/generate_storyboards`, `get_storyboards`,
+  `quote/generate_frames`, `chain_frames`, `quote/generate_videos`
+- **Audio**: `generate_tts` (required before final cut), `clone_voice`,
+  `speak_with_voice`, `set_character_voice`, `list_voices`, `delete_voice`,
+  `generate_bgm`, `replace_shot_dialogue`
+- **Finish**: `compose_episode`, `get_final_cut`, `get_export`,
+  `generate_episode_poster`, `generate_cover`
+- **Edit**: `edit_video_shot`, `regenerate_shot_video`, `split_shot`,
+  `trim_shot`, `rerender_episode`
+- **Read back (all free)**: `list_dramas`, `get_drama`, `get_characters`,
+  `get_scenes`, `get_assets`, `get_jobs`, `get_pipeline_status`,
+  `get_cost_estimate`, `get_budget_status`
+
+Full reference: https://api.shortreelai.com/docs/mcp

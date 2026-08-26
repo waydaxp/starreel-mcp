@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tgz
+# 密钥/凭据永不入库:key.pem 是 MCP registry DNS 认证的 Ed25519 私钥;
+# .npmrc 可能含 npm token。误提交=泄露 ai.starreel 命名空间控制权 / npm 发布权。
+*.pem
+.npmrc

@@ -1,0 +1,51 @@
+{
+  "name": "@starreel/mcp",
+  "version": "0.1.39",
+  "mcpName": "ai.starreel/starreel",
+  "description": "StarReel MCP server — drive the AI short-drama production pipeline (script → storyboards → frames → video → final cut) from Claude, Cursor, or any MCP client",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "starreel-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md",
+    "server.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && node scripts/release-check.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "starreel",
+    "video",
+    "localization",
+    "short-drama"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/waydaxp/starreel-mcp.git"
+  },
+  "homepage": "https://starreel.ai",
+  "bugs": {
+    "url": "https://github.com/waydaxp/starreel-mcp/issues"
+  }
+}

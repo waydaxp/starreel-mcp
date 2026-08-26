@@ -9,6 +9,13 @@ StarReel 的 MCP 服务器 —— 把 AI 短剧**编排产线**暴露给 Claude 
 操作手册(完整产线顺序 + 十条接入纪律 + 失败处理决策)。支持 Skill 的客户端会自动加载;
 不能 npx 的平台(Coze / Dify / GPTs / 自研 agent)可把它整段贴进 system prompt。
 
+也可用 [`skills`](https://skills.sh) CLI 一条命令装成独立 agent skill
+(Claude Code / Codex / Cursor / OpenCode 等 70+ 工具):
+
+```bash
+npx skills add waydaxp/starreel-mcp
+```
+
 ## 接入
 
 1. 在 StarReel → 设置 → API Key 创建一把 `produce` scope 的 key(`srk_live_...`,只展示一次)。
@@ -16,6 +23,14 @@ StarReel 的 MCP 服务器 —— 把 AI 短剧**编排产线**暴露给 Claude 
 
 ```bash
 claude mcp add starreel -e STARREEL_API_KEY=srk_live_xxx -- npx -y @starreel/mcp
+```
+
+也可装 **Claude Code 插件**——MCP server + agent skill 一步到位
+(先在 shell 里 `export STARREEL_API_KEY=srk_live_xxx`):
+
+```text
+/plugin marketplace add waydaxp/starreel-mcp
+/plugin install starreel@starreel
 ```
 
 一键安装:

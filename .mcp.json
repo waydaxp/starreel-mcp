@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "starreel": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@starreel/mcp"],
+      "env": {
+        "STARREEL_API_KEY": "${STARREEL_API_KEY}"
+      }
+    }
+  }
+}

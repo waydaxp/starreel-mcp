@@ -1,0 +1,28 @@
+{
+  "name": "starreel",
+  "owner": {
+    "name": "waydaxp",
+    "url": "https://github.com/waydaxp"
+  },
+  "plugins": [
+    {
+      "name": "starreel",
+      "source": {
+        "source": "github",
+        "repo": "waydaxp/starreel-mcp"
+      },
+      "description": "StarReel MCP server (80+ production tools) + the drama-production agent skill. Requires STARREEL_API_KEY.",
+      "homepage": "https://starreel.ai",
+      "license": "MIT",
+      "keywords": [
+        "mcp",
+        "ai-video",
+        "short-drama",
+        "text-to-video"
+      ]
+    }
+  ],
+  "metadata": {
+    "description": "StarReel — AI short-drama production pipeline (script → storyboards → frames → video → final cut)"
+  }
+}

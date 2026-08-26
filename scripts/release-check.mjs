@@ -4,7 +4,7 @@
  * 历史事故:package.json/server.json 三处版本号漂移过(0.1.10/0.1.12/0.1.24 并存);
  * dist 陈旧发包(tsc 注释泄密那次也是 dist 面审计缺失)。闸必须真退出码,echo 不算闸。
  */
-import { readFileSync, statSync, readdirSync } from 'node:fs'
+import { readFileSync, statSync, readdirSync, existsSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,6 +19,12 @@ const versionsInServer = [...serverRaw.matchAll(/"version"\s*:\s*"([^"]+)"/g)].m
 if (!versionsInServer.length) fail('server.json 里找不到 version')
 for (const v of versionsInServer) {
   if (v !== pkg.version) fail(`版本漂移:package.json=${pkg.version} 但 server.json 含 ${v}(两文件三处必须一致)`)
+}
+// Claude Code plugin 清单若带 version 也必须同步(.claude-plugin/plugin.json,第四处)
+const pluginManifest = join(ROOT, '.claude-plugin', 'plugin.json')
+if (existsSync(pluginManifest)) {
+  const plug = JSON.parse(readFileSync(pluginManifest, 'utf8'))
+  if (plug.version && plug.version !== pkg.version) fail(`版本漂移:plugin.json=${plug.version} ≠ package.json=${pkg.version}`)
 }
 
 // ② dist 新鲜:dist 最新 mtime 不得早于 src 最新 mtime(prepublishOnly 先跑 build,此闸兜底手滑)

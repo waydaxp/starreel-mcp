@@ -33,6 +33,14 @@ frame chaining, best-of-N auditing, billing) runs server-side at
 claude mcp add starreel -e STARREEL_API_KEY=srk_live_xxx -- npx -y @starreel/mcp
 ```
 
+Or install the **Claude Code plugin** — MCP server + agent skill in one step
+(set `STARREEL_API_KEY` in your shell first):
+
+```text
+/plugin marketplace add waydaxp/starreel-mcp
+/plugin install starreel@starreel
+```
+
 3. Ask your agent: *"Take this script and produce a full episode: `<your script>`"* —
    it will quote each paid stage first and only spend after you confirm.
 
@@ -144,6 +152,14 @@ manual (full pipeline order + ten operating disciplines + a failure playbook).
 Skill-aware clients load it automatically; on platforms that can't run `npx`
 (Coze / Dify / GPTs / custom agents) paste it into the system prompt and drive
 the same pipeline over REST (`/v1/produce/*`).
+
+Install it as a standalone agent skill (Claude Code, Codex, Cursor, OpenCode
+and [70+ agents](https://github.com/vercel-labs/skills#supported-agents)) via
+the [`skills`](https://skills.sh) CLI:
+
+```bash
+npx skills add waydaxp/starreel-mcp
+```
 
 ## Environment variables
 

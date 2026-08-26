@@ -1,0 +1,20 @@
+{
+  "name": "starreel",
+  "description": "Turn a script into a finished short-drama episode: bundles the StarReel MCP server (80+ tools, quote-before-spend billing) and the drama-production operating skill. Set STARREEL_API_KEY before use.",
+  "author": {
+    "name": "StarReel",
+    "url": "https://starreel.ai"
+  },
+  "homepage": "https://starreel.ai",
+  "repository": "https://github.com/waydaxp/starreel-mcp",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "ai-video",
+    "short-drama",
+    "text-to-video",
+    "storyboard"
+  ],
+  "mcpServers": "./.mcp.json",
+  "version": "0.1.39"
+}

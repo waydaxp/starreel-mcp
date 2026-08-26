@@ -22,6 +22,9 @@ frame chaining, best-of-N auditing, billing) runs server-side at
 
 ## Quick start
 
+[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=starreel&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBzdGFycmVlbC9tY3AiXSwiZW52Ijp7IlNUQVJSRUVMX0FQSV9LRVkiOiJzcmtfbGl2ZV94eHgifX0=)
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_MCP-0098FF)](https://vscode.dev/redirect/mcp/install?name=starreel&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40starreel%2Fmcp%22%5D%2C%22env%22%3A%7B%22STARREEL_API_KEY%22%3A%22srk_live_xxx%22%7D%7D)
+
 1. Create an API key with `produce` scope in **StarReel → Settings → API Keys**
    (`srk_live_...`, shown once).
 2. Add the server to Claude Code:
@@ -30,7 +33,14 @@ frame chaining, best-of-N auditing, billing) runs server-side at
 claude mcp add starreel -e STARREEL_API_KEY=srk_live_xxx -- npx -y @starreel/mcp
 ```
 
-Or in Cursor / any MCP client config:
+3. Ask your agent: *"Take this script and produce a full episode: `<your script>`"* —
+   it will quote each paid stage first and only spend after you confirm.
+
+## Works with any MCP client
+
+Requires Node ≥ 18 (`npx`). The **standard config** below works as-is in
+**Cursor · Windsurf · Cline / Roo Code · Claude Desktop · Trae · Cherry Studio ·
+Chatbox · DeepChat** and any client that reads an `mcpServers` JSON block:
 
 ```json
 {
@@ -44,8 +54,59 @@ Or in Cursor / any MCP client config:
 }
 ```
 
-3. Ask your agent: *"Take this script and produce a full episode: `<your script>`"* —
-   it will quote each paid stage first and only spend after you confirm.
+Clients with their own format:
+
+<details>
+<summary><b>Codex CLI</b> — <code>~/.codex/config.toml</code></summary>
+
+```toml
+[mcp_servers.starreel]
+command = "npx"
+args = ["-y", "@starreel/mcp"]
+env = { "STARREEL_API_KEY" = "srk_live_xxx" }
+```
+</details>
+
+<details>
+<summary><b>VS Code (Copilot agent mode)</b> — <code>.vscode/mcp.json</code> or user <code>mcp.json</code></summary>
+
+```json
+{
+  "servers": {
+    "starreel": {
+      "command": "npx",
+      "args": ["-y", "@starreel/mcp"],
+      "env": { "STARREEL_API_KEY": "srk_live_xxx" }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>Gemini CLI</b> — <code>~/.gemini/settings.json</code></summary>
+
+```json
+{
+  "mcpServers": {
+    "starreel": {
+      "command": "npx",
+      "args": ["-y", "@starreel/mcp"],
+      "env": { "STARREEL_API_KEY": "srk_live_xxx" }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>No Node / can't run npx?</b> (Coze, Dify, GPTs, custom agents)</summary>
+
+Drive the same pipeline over REST (`/v1/produce/*`) and paste
+[`SKILL.md`](./SKILL.md) into your system prompt — it carries the full
+workflow order, billing disciplines, and failure playbook.
+See the [API docs](https://api.shortreelai.com/docs/mcp).
+</details>
 
 ## What's inside
 

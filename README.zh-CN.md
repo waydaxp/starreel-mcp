@@ -18,7 +18,42 @@ StarReel 的 MCP 服务器 —— 把 AI 短剧**编排产线**暴露给 Claude 
 claude mcp add starreel -e STARREEL_API_KEY=srk_live_xxx -- npx -y @starreel/mcp
 ```
 
-其他 MCP 客户端(Cursor 等)照各自配置格式填 `npx -y @starreel/mcp` + 环境变量即可。
+一键安装:
+[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=starreel&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBzdGFycmVlbC9tY3AiXSwiZW52Ijp7IlNUQVJSRUVMX0FQSV9LRVkiOiJzcmtfbGl2ZV94eHgifX0=)
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_MCP-0098FF)](https://vscode.dev/redirect/mcp/install?name=starreel&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40starreel%2Fmcp%22%5D%2C%22env%22%3A%7B%22STARREEL_API_KEY%22%3A%22srk_live_xxx%22%7D%7D)
+
+## 全客户端接入
+
+要求 Node ≥ 18(能跑 `npx`)。下面这段**标准配置**在
+**Cursor · Windsurf · Cline / Roo Code · Claude Desktop · Trae · Cherry Studio ·
+Chatbox · DeepChat** 及任何读 `mcpServers` JSON 的客户端里通用:
+
+```json
+{
+  "mcpServers": {
+    "starreel": {
+      "command": "npx",
+      "args": ["-y", "@starreel/mcp"],
+      "env": { "STARREEL_API_KEY": "srk_live_xxx" }
+    }
+  }
+}
+```
+
+格式不同的客户端:
+
+- **Codex CLI** — `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.starreel]
+command = "npx"
+args = ["-y", "@starreel/mcp"]
+env = { "STARREEL_API_KEY" = "srk_live_xxx" }
+```
+
+- **VS Code(Copilot agent 模式)** — `.vscode/mcp.json` 或用户级 `mcp.json`,外层键是 `servers` 而非 `mcpServers`,内容同标准配置。
+- **Gemini CLI** — `~/.gemini/settings.json`,直接放标准配置。
+- **跑不了 npx 的平台(扣子 Coze / Dify / GPTs / 自研 agent)** — 走 REST(`/v1/produce/*`)+ 把 [`SKILL.md`](./SKILL.md) 整段贴进 system prompt,见[接入文档](https://api.shortreelai.com/docs/mcp)。
 
 ## 产线工具(从剧本到成片)
 

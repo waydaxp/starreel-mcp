@@ -153,8 +153,13 @@ content that will be rejected.
    `seedance-2.5` (default; full capability: frame chain / scene groups /
    in-place edit / extend / reference anchors; 720p ≈ 212 pts/s) or `hailuo-3`
    (MiniMax H3, beta; ≈1/3 cost at 70 pts/s for 720p; native dialogue & SFX
-   baked into the clip; up to 2K; ~6 min per shot; in-place edit / extend /
-   keyframe groups not yet available). **Set it before generating any video**:
+   baked into the clip; up to 2K; ~6 min per shot; in-place edit — high
+   fidelity — and episode extend supported, with the input video billed
+   per second on top of the output; keyframe groups and time-range edit
+   not available — `edit_video_shot` with `model: hailuo-3` rejects
+   `start_sec`/`end_sec`). `edit_video_shot` also takes a per-call `model`
+   so one shot can be edited on a different engine than the drama's.
+   **Set the drama engine before generating any video**:
    switching never re-renders existing shots, and mixing engines inside one
    drama risks style/identity drift.
    **Images are slow** (tens of seconds to minutes each; a whole episode can take

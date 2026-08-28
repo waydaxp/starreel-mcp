@@ -130,7 +130,7 @@ const PROJECT_SETTINGS_FIELDS = {
   // drama 级视频引擎(整剧统一,单镜/批量/场景组/重生全走它)
   video_engine: z.enum(VIDEO_ENGINES).optional().describe('视频引擎(★drama级·整剧统一·AI应主动告知客户可选并给出两档价差让客户定):' +
     'seedance-2.5(默认·全能力:帧链/场景组/就地编辑/延长/参考图锚·720p约212点/秒) / ' +
-    'hailuo-3(MiniMax H3·灰度:约1/3成本 720p 70点/秒·原生对白与音效·支持2K·单镜生成约6分钟·就地编辑/延长/关键帧组暂不可用)。' +
+    'hailuo-3(MiniMax H3·灰度:约1/3成本 720p 70点/秒·原生对白与音效·支持2K·单镜生成约6分钟·支持就地编辑(强保真)与成片续写·关键帧组/时间戳区间暂不可用;编辑/续写输入视频另按秒计费)。' +
     '★必须在出视频**前**设置——切换不回溯已生成的镜头,同剧混用两引擎会有画风/身份漂移风险'),
   // 整剧视觉一致性锚(注入所有出图/视频 prompt,决定跨镜一致)
   cinematography_prompt: z.string().optional().describe('摄影DNA:镜头/镜片/光圈/调色一揽子,注入所有出图/视频prompt,整剧镜头一致'),
@@ -778,11 +778,14 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   server.tool(
     'edit_video_shot',
     '确认后就地编辑某镜视频:按 instruction 改,可带参考图/视频/音频,或用 start_sec/end_sec 做区间替换。' +
+      '可用 model 为本次编辑单独选引擎(与剧引擎可不同):hailuo-3=MiniMax H3 强保真编辑约1/3成本,但不支持 start_sec/end_sec 区间(传了会 400);' +
+      '编辑/续写的输入视频在 H3 上另按秒计费。' +
       CONFIRM_HINT,
     {
       storyboard_id: z.number().int().positive(),
       quote_id: z.string().describe('来自 quote_edit_video_shot'),
       instruction: z.string().describe('编辑指令(如"把背景换成夜晚")'),
+      model: z.enum(VIDEO_ENGINES).optional().describe('本次编辑的引擎(缺省=跟随剧 video_engine);hailuo-3 不支持区间编辑'),
       reference_image_urls: z.array(z.string()).max(9).optional().describe('参考图 URL(先 upload_image 拿)'),
       reference_video_urls: z.array(z.string()).max(2).optional(),
       reference_audio_urls: z.array(z.string()).max(3).optional(),

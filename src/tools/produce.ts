@@ -11,8 +11,32 @@
  * 用 get_storyboards / get_episode_status 轮询到完成。下载链接只发我方 COS 链接。
  */
 import { z } from 'zod'
+import { readFileSync, writeFileSync, chmodSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { StarReelClient } from '../client.js'
+import { assertSafeToolchainDir, TOOLCHAIN_FILENAMES } from '../path-guard.js'
+
+const TOOLCHAIN_USAGE = [
+  '1. 三个脚本放同一目录(assemble.sh 需可执行位)。',
+  '2. 把 export_handoff_pack 的返回体存成 manifest.json。',
+  '3. python3 fetch_pack.py manifest.json -o ./pack   # 下载素材 + 内联字幕落成逐镜 SRT + 改写成本地路径',
+  '4. python3 compile_timeline.py ./pack [--transitions plan.json]   # 展开时间轴',
+  '5. ./assemble.sh ./pack out.mp4 [plan.json]   # 装配成片',
+]
+const TOOLCHAIN_NOTE =
+  'assemble.sh 会先自检 ffmpeg 是否带 libass;不带则字幕以软字幕轨输出而非烧录(竖屏发布必须烧录)。' +
+  '包里若带 render_target.color_lut,fetch_pack.py 会把调色查找表一并下载,assemble.sh 自动施加——' +
+  '不施加的话你的成片与平台成片会有色差。'
+
+/**
+ * 随包发布的装配工具链目录。本文件编译后在 dist/tools/produce.js，
+ * assets/ 在包根，所以要上两级 —— 少一级会静默解析到 dist/assets（不存在），
+ * 而 get_handoff_toolchain 里 catch 掉读取异常，坏结果不会崩、只会悄悄发给第三方。
+ * release-check 里有一条闸钉住这个路径。
+ */
+export const HANDOFF_ASSETS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets', 'handoff')
 
 function jsonResult(data: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
@@ -41,6 +65,10 @@ const WORKFLOW_HINT =
   '把自己写好的剧本直接贴进 edit_rewritten_script 绕过改写会被 400 拒(没有改写稿就没有可改的对象),extract_assets 同样要求基于改写稿。' +
   '改写后的所有修改按 AI 产物的结构化格式做:改稿 edit_rewritten_script(润色/纠正)、人物档案 update_character、分镜 update_shot/replace_shot_dialogue——' +
   '别回头整篇替换剧本或在设定字段里另写一套,两套真相源打架是一致性事故的头号根源。' +
+  '★★**改写成功一次后就别再重跑 rewrite_script**:它是从原稿整篇重来,当前稿的所有修正全丢,' +
+  '且新版不保证保留旧版已改好的地方(三版实测会来回摆)。要修就 edit_rewritten_script 点改' +
+  '(get_script 取全文 → 只改那几场、其余逐字照抄 → 提交整篇),免费秒级、结果确定;' +
+  '误重跑用 get_script(include_previous=1) 回捞上一版。' +
   'generate_portraits_and_sheets(定妆图+设定图·分镜后建只给出场角色出图更省)→assign_voices(分配音色)→frames→videos→generate_tts→compose;' +
   '★别先建角色形象/道具设定图/动作模板再分镜——分镜是纯文本步、不依赖任何图;资产在分镜后建更省更准(动作模板本就必须分镜后)。收费步照现有 quote 报价确认流程。' +
   '广告另需 add_product+generate_product_sheet;MV 走 set_mv_lyrics→generate_mv_story→generate_mv_script。' +
@@ -54,6 +82,9 @@ const WORKFLOW_HINT =
   '建剧/改设定时 AI 应主动告知客户「默认用视频原声,如需 TTS 配音把 use_clip_audio 设 false」,让客户选。' +
   '★图片模型默认香蕉2(Nano Banana 2 = gemini-3.1-flash-image·整剧统一画风):create_drama/update_project_settings 的 image_model 设,不传即默认香蕉2;' +
   '可选 gemini-3-pro-image(香蕉Pro·更精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream5.0)/gpt-image-2(ChatGPT Image2);generate_frames 可临时覆盖某次。' +
+  '★视频引擎二选一(drama级·AI 建剧时应主动告知客户并给价差让客户定):seedance-2.5(默认·全能力·720p约212点/秒) vs ' +
+  'hailuo-3(MiniMax H3·灰度·约1/3成本70点/秒·原生对白音效·2K·单镜约6分钟·就地编辑/延长/关键帧组暂不可用);' +
+  'create_drama/update_project_settings 的 video_engine 设,★必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。' +
   '★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。' +
   '★改某一镜画面 / 换定妆图后要让新图生效,走**单镜重生 generate_shot_frame**(平台自动带该镜身份锚·场景道具参考·画风锚,保全片一致);' +
   'generate_frames 只批量补「缺帧」的镜、已有首帧的镜跳过(正常、不是"拒绝"),尾帧用 frame_type=last_frame 可批量补。换定妆图(set_character_portrait)后响应里的 stale_frames 就是被旧图污染、需逐镜重生的镜。' +
@@ -63,6 +94,12 @@ const WORKFLOW_HINT =
   '★两条锁定纪律:①**画幅比例**在 create_drama 即定、drama 级锁定,之后所有出图/出视频/成片都用它、**别中途改**' +
   '(改了已生成内容画幅会不一致、漂移);不设默认 9:16。②**拆镜每镜 5-7 秒是对 AI 出视频优化的正常时长**,' +
   '别因「镜偏长」误判就重拆——generate_storyboards 会**替换整集所有分镜**、已出图白费,已有分镜后端会拦、需 confirm_replace。' +
+  '★改写保真(默认 auto 智能路由):set_script 的原稿**本身已是剧本形态**(场景头/对白行结构)时,rewrite_script 自动走两步保真——' +
+  '客户台词逐句由机器闸锁定(丢一句即内部拒收重做)、AI 绝不加戏;剧作缺口(钩子/情感锚点)不自动补,写进 get_script 返回的 dramaturgy_suggestions 由客户决定采纳。' +
+  '原稿是小说/大纲则自动走创作型改写(AI 铺钩子造情感点),两种客户各得其所、无需手动切换。' +
+  '要覆盖默认用 update_project_settings 的 rewrite_pipeline(auto/two_pass/single_forced)与 fidelity_enforce(1=保真硬闸)。' +
+  '客户说「AI 把我的剧本改偏了」时的处置:①确认完整原稿已进 set_script;②rewrite_pipeline 设 two_pass 强制保真后重跑 rewrite_script;' +
+  '③客户确认角色外观后用 update_character 的 profile_locked=1 锁定档案,防后续提取覆盖外貌导致定妆图换脸。' +
   '用 get_pipeline_status 查进度(按项目类型返回专属步骤)。'
 
 const ETHNICITY_CODES = [
@@ -79,6 +116,8 @@ const FRAME_TYPE_ARG = z.enum(['first_frame', 'last_frame', 'both'])
 
 const ASPECT_RATIOS = ['9:16', '16:9', '1:1', '4:5', '4:3', '21:9'] as const
 const VIDEO_RESOLUTIONS = ['480p', '720p', '1080p', '4k'] as const
+// 剧级视频引擎(与后端 video-engine-policy 白名单同源;短 id,后端归一化)。
+const VIDEO_ENGINES = ['seedance-2.5', 'hailuo-3'] as const
 
 // 「项目设定页」通用视觉/音频/字幕/转场设定 —— create_drama 与 update_project_settings 共用。
 // 后端内部 PUT /dramas 已接受写库,facade 白名单 Wave3 已放行(produce-create-fields.ts)。
@@ -88,6 +127,11 @@ const PROJECT_SETTINGS_FIELDS = {
   image_model: z.string().optional().describe('图片模型(★drama级·整剧统一画风·默认香蕉2 Nano Banana 2)。可选:' +
     'gemini-3.1-flash-image(香蕉2·默认·71点)/gemini-3-pro-image(香蕉Pro·精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·31点)/' +
     'doubao-seedream-5-0-260128(Seedream 5.0)/gpt-image-2(ChatGPT Image 2)。建剧即定、整剧统一;generate_frames 可临时覆盖某次出图'),
+  // drama 级视频引擎(整剧统一,单镜/批量/场景组/重生全走它)
+  video_engine: z.enum(VIDEO_ENGINES).optional().describe('视频引擎(★drama级·整剧统一·AI应主动告知客户可选并给出两档价差让客户定):' +
+    'seedance-2.5(默认·全能力:帧链/场景组/就地编辑/延长/参考图锚·720p约212点/秒) / ' +
+    'hailuo-3(MiniMax H3·灰度:约1/3成本 720p 70点/秒·原生对白与音效·支持2K·单镜生成约6分钟·就地编辑/延长/关键帧组暂不可用)。' +
+    '★必须在出视频**前**设置——切换不回溯已生成的镜头,同剧混用两引擎会有画风/身份漂移风险'),
   // 整剧视觉一致性锚(注入所有出图/视频 prompt,决定跨镜一致)
   cinematography_prompt: z.string().optional().describe('摄影DNA:镜头/镜片/光圈/调色一揽子,注入所有出图/视频prompt,整剧镜头一致'),
   art_bible: z.string().optional().describe('美术圣经:色调/材质/气质,注入所有生图prompt,统一视觉风格'),
@@ -128,7 +172,7 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   // ---------- 建剧前:列可选项 ----------
   server.tool(
     'list_project_options',
-    '列出建剧的全部可选项:项目类型(短剧/广告/MV/品牌片)、画幅比例、视频分辨率(带中英标签+说明+默认值)。' +
+    '列出建剧的全部可选项:项目类型(短剧/广告/MV/品牌片)、画幅比例、视频分辨率、视频引擎(Seedance 2.5/MiniMax H3,带价差与能力差)(带中英标签+说明+默认值)。' +
       '建剧前先调它,把选项给用户挑,再照 key 传给 create_drama。免费。',
     {},
     async () => jsonResult(await client.produceGet('/project-options')),
@@ -165,6 +209,8 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       project_type: z.enum(['drama', 'ad', 'mv', 'brand_film']).optional()
         .describe('项目类型(默认 drama)。ad=广告(改写走 ad_script_rewriter);mv=音乐(走歌词→故事→剧本子流程);brand_film=品牌微电影(默认16:9)'),
       rewrite_mode: z.enum(['standard', 'director']).optional().describe('AI改写深度:standard 或 director(导演级)'),
+      rewrite_pipeline: z.enum(['auto', 'two_pass', 'single_forced']).optional().describe('改写流水线:auto(默认,按原稿形态智能路由——剧本形态走两步保真,小说/大纲走创作改写)/two_pass(强制两步保真,客户自带成熟剧本必选)/single_forced(强制单步创作)'),
+      fidelity_enforce: z.number().int().min(0).max(1).optional().describe('1=改写保真硬闸:丢台词/丢人物/丢动作节拍直接拒收重做(客户要求逐句保留时开)'),
       director_style: z.string().optional().describe('导演风格包 key'),
       ...PROJECT_SETTINGS_FIELDS,
     },
@@ -195,23 +241,44 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   server.tool(
     'rewrite_script',
     'AI 改写:把原始剧本改写成可拍稿(读 content → 写 script_content)。按项目类型自动选改写 agent' +
+      '★保真自动路由:原稿已是剧本形态时自动走两步保真(台词逐句机器锁定、AI 不加戏,剧作缺口进 dramaturgy_suggestions 由客户决定);原稿是小说/大纲则走创作型改写。' +
       '(广告走 ad 改写;MV 不走标准改写会被拦)。后台异步(分钟级),文本步按 token 后付、不欠费,无需报价。' +
       '完成后用 get_script 审阅、edit_rewritten_script 改稿。' +
       '★典型耗时 2~4 分钟(生产实测 ≈169 秒)。**60 秒内查不到结果是正常的,不是失败**——' +
-      '用 get_run_status 判断还在不在跑,别急着重发。' + WORKFLOW_HINT,
+      '用 get_run_status 判断还在不在跑,别急着重发。' +
+      '★★**本工具是"从原稿整篇重来",不是"再改一版"**:已有可拍稿时重跑会把当前稿连同已做的所有修正' +
+      '一起覆盖,而且新一版**不保证保留旧版已经改好的地方**(生产三版实测:上一版拆好的长旁白段下一版又' +
+      '合回去、上一版正确的年代服装下一版漂走)。响应里的 overwrites_existing_script=true 就是这个意思。' +
+      '所以**首次改写成功之后,后续所有修改一律用 edit_rewritten_script 点改**——免费、秒级、只动指定的' +
+      '那几场,其余逐字不变,结果确定不抽卡;只有"要一个完全不同的版本"才重跑本工具。' +
+      '误重跑后用 get_script(include_previous=1) 取回上一版。' + WORKFLOW_HINT,
     { episode_id: z.number().int().positive() },
     async ({ episode_id }) => jsonResult(await client.producePost(`/episodes/${episode_id}/rewrite`)),
   )
   server.tool(
     'get_script',
-    '读某一集的原始内容 + AI 改写后的可拍稿 + 改写状态(供审阅、决定是否 edit_rewritten_script)。免费。',
-    { episode_id: z.number().int().positive() },
-    async ({ episode_id }) => jsonResult(await client.produceGet(`/episodes/${episode_id}/script`)),
+    '读某一集的原始内容 + AI 改写后的可拍稿 + 改写状态 + dramaturgy_suggestions(两步保真模式下 AI 识别到但未自动补的剧作缺口——钩子/情感锚点;把它转述给客户决定采纳与否,忽略不影响产线)。免费。' +
+      '★改稿工作流:先用本工具取回 rewritten_script 全文 → 只改客户要改的那几场 → 用 edit_rewritten_script 提交(不要重跑改写)。' +
+      'previous_script_available=true 表示有上一版快照;传 include_previous=1 可取回上一版全文(误重跑/改坏了的回捞路径,默认不带以免响应翻倍)。',
+    {
+      episode_id: z.number().int().positive(),
+      include_previous: z.boolean().optional().describe('取回上一版可拍稿全文(previous_script 快照)。默认 false;改坏了或误重跑时用'),
+    },
+    async ({ episode_id, include_previous }) =>
+      jsonResult(await client.produceGet(`/episodes/${episode_id}/script${include_previous ? '?include_previous=1' : ''}`)),
   )
   server.tool(
     'edit_rewritten_script',
-    '客户改 AI 改写后的可拍稿(写 script_content)。只用于修改 AI 改写产出的稿(人工润色/纠正);' +
-      '本集还没跑过 rewrite_script 时会被 400 拒——这不是绕过改写的通道,别把自己写好的剧本直接贴进来。免费。',
+    '★改稿的**首选通道**:改 AI 改写后的可拍稿(写 script_content)。免费、秒级、结果确定不抽卡——' +
+      '**改写成功一次之后,所有修改都走这里,不要重跑 rewrite_script**(那是从原稿整篇重来,当前稿的修正全丢、' +
+      '已改好的地方会退回去)。' +
+      '★怎么点改(三步,别跳):① get_script 取回 rewritten_script **全文**;② **只改要改的那几场**——' +
+      '目标场次内改动词句/拆场/删挂错的 motif/补 [SFX]/移器物到 [道具] 行,其余场次连标点都逐字照抄;' +
+      '③ 把改完的**整篇**提交本工具(本工具是全文覆盖,所以未改动部分必须原样带回,不能只发片段、也不要让模型' +
+      '"顺手重写"没让它改的场)。典型可点改的问题:场次太长要拆、台词跨镜断句、时段/年代写错、' +
+      'motif 挂在没有该元素的场、[角色档案] 服装段混进手持器物、缺 [SFX]/[BGM] 标注。' +
+      '只用于修改 AI 改写产出的稿;本集还没跑过 rewrite_script 时会被 400 拒——这不是绕过改写的通道,' +
+      '别把自己写好的剧本直接贴进来。改坏了可用 get_script(include_previous=1) 取回上一版。免费。',
     {
       episode_id: z.number().int().positive(),
       script: z.string().min(1).describe('改好的可拍剧本(覆盖 AI 改写稿)'),
@@ -525,6 +592,8 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       ethnicity: z.enum(ETHNICITY_CODES).optional().describe('角色族裔锁'),
       ethnicity_note: z.string().optional(),
       rewrite_mode: z.enum(['standard', 'director']).optional(),
+      rewrite_pipeline: z.enum(['auto', 'two_pass', 'single_forced']).optional().describe('改写流水线:auto 默认智能路由/two_pass 强制两步保真/single_forced 强制单步创作'),
+      fidelity_enforce: z.number().int().min(0).max(1).optional().describe('1=改写保真硬闸(丢台词即拒)'),
       director_style: z.string().optional(),
       theme_statement: z.string().optional().describe('一句话主题'),
       subtitle_preset: z.string().optional(),
@@ -949,7 +1018,8 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   // ========== P1 · 资产精修(提取后改设定再出图)==========
   server.tool(
     'update_character',
-    '改角色设定(名字/外貌/年龄段/族裔/性别/性格/戏份)。改后需重出定妆图/相关图。免费。',
+    '改角色设定(名字/外貌/年龄段/族裔/性别/性格/戏份/档案锁定)。改后需重出定妆图/相关图。免费。' +
+      '★profile_locked=1:客户确认外观后锁定档案,后续 AI 提取不再覆盖外貌/性格/描述——外貌锚着定妆图与人脸锁定,被覆盖=全片换脸;确认满意即锁,要再改先传 0 解锁。',
     {
       character_id: z.number().int().positive(),
       name: z.string().optional(),
@@ -960,6 +1030,7 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       gender: z.string().optional(),
       personality: z.string().optional(),
       role: z.string().optional(),
+      profile_locked: z.number().int().min(0).max(1).optional().describe('1=锁定档案(AI 提取不再覆盖外貌/性格/描述,防定妆图换脸);0=解锁'),
     },
     async ({ character_id, ...fields }) => jsonResult(await client.producePut(`/characters/${character_id}`, fields)),
   )
@@ -1027,7 +1098,7 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   )
   server.tool(
     'update_prop',
-    '改道具(名称/类型/描述/prompt/尺寸)。免费。',
+    '改道具(名称/类型/描述/prompt/尺寸/多视角参考图)。免费。',
     {
       prop_id: z.number().int().positive(),
       name: z.string().optional(),
@@ -1035,6 +1106,12 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       description: z.string().optional(),
       prompt: z.string().optional(),
       physical_size_hint: z.string().optional(),
+      // v0.9.976 — 多视角/细节参考图（整份覆盖；传 [] 清空，最多 6 张 http(s) 图）。
+      // 与主图分工：主图锁「这是什么」，多视角锁「截面与部件怎么装配」——单张白底图
+      // 和文字都表达不了这个（生产实证：形制文本已送达，锤头仍画成被禁的形状）。
+      // 正视 / 侧视 / 端面各一张最有效，端面是截面形状唯一能说清的方式。
+      reference_images: z.array(z.string().url()).max(6).optional()
+        .describe('多视角参考图 URL 数组，整份覆盖；建议正视/侧视/端面各一张'),
     },
     async ({ prop_id, ...fields }) => jsonResult(await client.producePut(`/props/${prop_id}`, fields)),
   )
@@ -1247,5 +1324,111 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     },
     async ({ character_id, voice_id }) =>
       jsonResult(await client.producePost(`/characters/${character_id}/voice`, { voice_id })),
+  )
+
+  // ── 素材交接包：客户自己拼片的通道 ──────────────────────────────────────
+  // 与 compose_episode 的分工：compose_episode = 「平台替你拼」；本组工具 = 「素材给你，
+  // 你自己决定转场、自己拼」。两条路都不丢客户的对白/音效/配乐/字幕成果。
+  server.tool(
+    'export_handoff_pack',
+    '导出本集「素材交接包」清单:逐镜裸片 + 对白音轨 + 音效 + 配乐 + 字幕的可下载 URL,' +
+      '交给你在**自己那边**完成转场决策、拼接、混音、烧字幕——平台不参与终拼。免费,零扣费。\n' +
+      '\n【推荐流程】① 调本工具拿 manifest;② 按 clips[].url 把裸片下载到本地;' +
+      '③ 你自己看片判断每个接缝该用什么转场(manifest 给了 scene_boundary 场景边界作判据),' +
+      '写一份 plan.json;④ 用 get_handoff_toolchain 拿到 compile_timeline.py 展开时间轴、' +
+      'assemble.sh 装配出成片。工具链已经把「加了重叠转场之后字幕/对白/音效怎么跟着位移」算好了。\n' +
+      '\n【三个不看就会翻车的事实】\n' +
+      '① audio_contract.mode="tts" 时**裸片里没有人声**,对白在 dialogue_audio 里;不铺就是整集没台词。' +
+      'mode="clip" 时人声已烤在裸片音轨里,反过来**不要**再叠。\n' +
+      '② 每镜必须按 trim_head_ms / duration_ms 裁剪再用;直接拼整条裸片会把平台已经 QC 掉的' +
+      '首尾形变帧一起拼进去。\n' +
+      '③ 字幕 cue、dialogue_audio.offset_ms、sfx[].offset_ms 的基准都是「该镜 trim 之后的第 0 毫秒」,' +
+      '不是成片绝对时间。你加多少重叠转场都不用改它们——交给 compile_timeline.py 展开,别手算累加。\n' +
+      '\n想让平台代拼、要平台级质量闸(终拼预检/音画等长/响度母带),改用 compose_episode。',
+    { episode_id: z.number().int().positive() },
+    async ({ episode_id }) => {
+      const manifest: any = await client.produceGet(`/episodes/${episode_id}/handoff-pack`)
+      return jsonResult({
+        ...manifest,
+        assembly_guide: {
+          step_1_download:
+            '按 shots[].clip.url / dialogue_audio.url / sfx[].url / bgm[].url 下载素材。' +
+            'URL 到 expires_at 失效,过期重新调本工具。',
+          step_2_decide_transitions:
+            '自己分析画面决定每个接缝的转场。scene_boundary="start" 是换场(适合给转场),' +
+            '"continue" 是同场景(平台默认硬切——同场景逐镜叠化是"幻灯片拼凑感"的主因)。' +
+            'transition_hint 是平台建议,你可以覆盖。',
+          step_3_plan_json:
+            '写 plan.json:{"transitions":[{"before_shot":3,"type":"fade","overlap_ms":300}]}。' +
+            'type 接受预设 id(fade/flash_white/whip_pan…)、导演语义键' +
+            '(match_cut/smash_cut/cross_dissolve…)、或直接给 ffmpeg xfade 名。' +
+            'overlap_ms 不填就用该预设的规范时长。',
+          step_4_assemble:
+            'save_handoff_toolchain 把三个脚本落到本地目录,然后:\n' +
+            '  python3 fetch_pack.py manifest.json -o ./pack   # 下载素材 + 内联字幕落成 SRT\n' +
+            '  python3 compile_timeline.py ./pack --transitions plan.json\n' +
+            '  ./assemble.sh ./pack out.mp4 plan.json',
+          gotchas: [
+            'clip.duration_source="authored" 的镜是 probe 失败退回声明时长的,请自行 ffprobe 校正,否则拼接有累积误差。',
+            'render_target.color_lut 非 null 时,裸片是**未调色**的:必须施加随包的 haldclut 查找表,' +
+              '否则你的成片与平台成片有色差。fetch_pack.py 会下载它、assemble.sh 会自动施加。',
+            '重叠转场会让其后所有镜整体前移且误差累积——用 compile_timeline.py 算,不要手算。',
+            '闪白/闪黑(flash_white/flash_black)是硬切+片头闪光,不能走 xfade,否则双重闪且破坏口型。工具链已处理。',
+            '响度必须两 pass 线性母带;单 pass 动态 loudnorm 会把对白间隙的 BGM 上提,让配乐增益调了等于没调。',
+            '侧链避让的 key 必须是纯人声轨,混进音效会让打击音也把 BGM 压下去,听感是配乐一惊一乍。',
+          ],
+          toolchain:
+            'save_handoff_toolchain 直接把工具链写到你的工作目录(推荐);或 get_handoff_toolchain 拿源码自己保存。',
+        },
+      })
+    },
+  )
+  server.tool(
+    'get_handoff_toolchain',
+    '拿到素材交接包的装配工具链源码(compile_timeline.py 时间轴编译器 / assemble.sh ffmpeg 装配脚本)。' +
+      '免费。本工具只返回源码文本,**不会**在你机器上写文件——请自行保存到工作目录再执行。\n' +
+      'compile_timeline.py 负责把「镜相对」的字幕/对白/音效锚点展开成你自己时间轴上的绝对时间码,' +
+      '并处理重叠转场引起的整体位移;assemble.sh 是从裸片到成片的完整 ffmpeg 装配基线' +
+      '(裁剪→规范化→拼接/xfade→配乐侧链→字幕→两 pass 母带)。' +
+      '依赖 ffmpeg(烧字幕需带 libass)、ffprobe、jq、python3。',
+    {
+      script: z.enum([...TOOLCHAIN_FILENAMES, 'all']).optional().describe('要哪个;缺省 all'),
+    },
+    async ({ script }) => {
+      const want = script && script !== 'all' ? [script] : [...TOOLCHAIN_FILENAMES]
+      const files: Record<string, string> = {}
+      for (const f of want) {
+        try {
+          files[f] = readFileSync(join(HANDOFF_ASSETS, f), 'utf8')
+        } catch (e: any) {
+          files[f] = `// 读取失败: ${e?.message || e}`
+        }
+      }
+      return jsonResult({ files, usage: TOOLCHAIN_USAGE, note: TOOLCHAIN_NOTE })
+    },
+  )
+  server.tool(
+    'save_handoff_toolchain',
+    '把装配工具链(fetch_pack.py / compile_timeline.py / assemble.sh)直接写到你本地的一个目录,' +
+      '省掉自己复制粘贴。免费。目录必须**已存在**且是绝对路径;文件名固定,不接受自定义。\n' +
+      '拒绝写入隐藏目录(~/.ssh、~/.config、.git…)与系统目录——这是写盘不是读盘,覆盖错地方不可逆。\n' +
+      '落盘后完整流程:\n' +
+      '  python3 fetch_pack.py manifest.json -o ./pack   # 下载素材、内联字幕落成 SRT\n' +
+      '  python3 compile_timeline.py ./pack [--transitions plan.json]\n' +
+      '  ./assemble.sh ./pack out.mp4 [plan.json]',
+    { dir: z.string().describe('已存在的绝对路径目录,如 /Users/me/work/starreel-pack') },
+    async ({ dir }) => {
+      const safe = assertSafeToolchainDir(dir)
+      const written: Array<{ file: string; bytes: number; mode: string }> = []
+      for (const f of TOOLCHAIN_FILENAMES) {
+        const body = readFileSync(join(HANDOFF_ASSETS, f), 'utf8')
+        const dest = join(safe, f)
+        writeFileSync(dest, body, 'utf8')
+        // .sh 要可执行,否则第三方还得自己 chmod 一次才跑得起来
+        if (f.endsWith('.sh')) chmodSync(dest, 0o755)
+        written.push({ file: dest, bytes: Buffer.byteLength(body), mode: f.endsWith('.sh') ? '0755' : '0644' })
+      }
+      return jsonResult({ written, usage: TOOLCHAIN_USAGE, note: TOOLCHAIN_NOTE })
+    },
   )
 }

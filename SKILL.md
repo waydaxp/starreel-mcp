@@ -147,6 +147,16 @@ content that will be rejected.
    `generate_frames` / `generate_shot_frame` may override per call. Options:
    `gemini-3-pro-image` (Nano Banana Pro, finer, pricier), `gemini-3.1-flash-lite-image`
    (Lite, cheap), `doubao-seedream-5-0-260128` (Seedream 5.0), `gpt-image-2`.
+   **Video engine**: videos use a drama-level engine, set via `create_drama` /
+   `update_project_settings` field `video_engine`. Two options — surface the
+   choice to the customer with the price gap and let them decide:
+   `seedance-2.5` (default; full capability: frame chain / scene groups /
+   in-place edit / extend / reference anchors; 720p ≈ 212 pts/s) or `hailuo-3`
+   (MiniMax H3, beta; ≈1/3 cost at 70 pts/s for 720p; native dialogue & SFX
+   baked into the clip; up to 2K; ~6 min per shot; in-place edit / extend /
+   keyframe groups not yet available). **Set it before generating any video**:
+   switching never re-renders existing shots, and mixing engines inside one
+   drama risks style/identity drift.
    **Images are slow** (tens of seconds to minutes each; a whole episode can take
    10+ min): poll `get_storyboards` and read `frame_status` — `pending` = still
    generating (keep waiting, NEVER re-call generate_frames — that double-charges),
@@ -179,6 +189,66 @@ content that will be rejected.
     reason, and what was actually spent — never fabricate success. Keep the API
     key in an environment variable or secrets manager, never in code or logs.
     The 15-min token auto-re-exchanges; a leaked key is revoked in Settings.
+
+## Script fidelity — auto two-pass rewriting
+
+`rewrite_script` routes automatically based on what the user put into
+`set_script`:
+
+- **Source is already a screenplay** (scene headers / dialogue-line structure):
+  the platform runs a two-pass fidelity rewrite. The user's dialogue is
+  byte-locked by machine gates (a missing line is rejected and redone
+  internally — you never need to babysit this), and the AI adds **no** hooks,
+  twists, or emotional beats of its own. Dramaturgy gaps it detects come back
+  in `get_script` → `dramaturgy_suggestions`; relay them to the user and let
+  the user decide. Ignoring them blocks nothing.
+- **Source is a novel or outline**: the creative single-pass rewrite runs as
+  before (the AI builds hooks and emotional beats).
+
+Overrides via `update_project_settings`: `rewrite_pipeline`
+(`auto` default / `two_pass` force fidelity / `single_forced` force creative)
+and `fidelity_enforce: 1` (hard-reject any rewrite that drops a dialogue line,
+a cast member, or an action beat).
+
+When the user complains "the AI rewrote my script off course": ① confirm the
+full original went into `set_script`; ② set `rewrite_pipeline: "two_pass"` and
+rerun `rewrite_script`; ③ once the user approves a character's look, lock it
+with `update_character` `profile_locked: 1` so later extractions can't
+overwrite appearance (appearance anchors the portrait and face lock — an
+overwrite means face drift across the whole drama).
+
+## After the first rewrite — 点改优先 (point-edit, don't re-run)
+
+**`rewrite_script` is "start over from the source", not "give me another
+revision."** Once a draft exists, re-running it overwrites the current draft
+together with every fix already made — and the new version does **not**
+inherit what the previous one got right. Measured across three production
+runs of the same episode: a long VO block correctly split in v2 was merged
+back in v3, and era-correct wardrobe in v2 drifted a decade in v3. The
+kickoff response says so explicitly via `overwrites_existing_script: true`.
+
+So after the first successful rewrite, **every** change goes through
+`edit_rewritten_script` — free, seconds, deterministic:
+
+1. `get_script` → take the **full** `rewritten_script`.
+2. Change **only the scenes that need changing** — split an over-long scene,
+   fix a line, drop a `motif` that has no matching visual, add a missing
+   `[SFX]`, move a hand-held object out of the wardrobe segment into the
+   scene's `[道具]` line. Every other scene is copied back **verbatim**,
+   punctuation included.
+3. Submit the **whole** script to `edit_rewritten_script` (it is a full-text
+   write, so untouched parts must come back unchanged — never send a fragment,
+   and never let the model "tidy up" scenes it wasn't asked to touch).
+
+Re-run `rewrite_script` only when the user genuinely wants a different take on
+the whole episode. If a re-run (or an edit) went wrong,
+`get_script` with `include_previous: true` returns the previous draft snapshot.
+
+Point-editable by definition — anything the platform can already name: scene
+length, cross-shot dialogue splits, wrong time-of-day or era, orphan motifs,
+props in the wardrobe segment, missing `[SFX]`/`[BGM]`, group-shot head counts.
+Storyboard-level issues do **not** need a script edit at all: use
+`update_shot` / `replace_shot_dialogue`.
 
 ## Failure playbook
 
@@ -223,6 +293,18 @@ refund on failure); you never compensate manually.
   `generate_bgm`, `replace_shot_dialogue`
 - **Finish**: `compose_episode`, `get_final_cut`, `get_export`,
   `generate_episode_poster`, `generate_cover`
+- **Assemble it yourself**: `export_handoff_pack`, `get_handoff_toolchain` —
+  download the per-shot raw clips, dialogue tracks, SFX, BGM and subtitles, then
+  decide transitions and assemble the cut on your own side. Use this instead of
+  `compose_episode` when you want to judge each seam yourself; use
+  `compose_episode` when you want the platform's finishing pipeline (pre-flight
+  checks, A/V duration parity, loudness mastering). Three facts that will bite you:
+  `audio_contract.mode="tts"` means the raw clips have **no voice** (dialogue ships
+  separately — skip it and the episode is silent); every shot must be cut to
+  `trim_head_ms`/`duration_ms` or you splice in frames the platform already QC'd out;
+  and all subtitle/dialogue/SFX offsets are relative to **each shot's own trimmed
+  start**, not to the final timeline — add whatever overlapping transitions you like
+  and let `compile_timeline.py` expand them, never hand-compute the shift.
 - **Edit**: `edit_video_shot`, `regenerate_shot_video`, `split_shot`,
   `trim_shot`, `rerender_episode`
 - **Read back (all free)**: `list_dramas`, `get_drama`, `get_characters`,

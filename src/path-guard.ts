@@ -53,3 +53,51 @@ export function assertSafeLocalMediaPath(
   }
   return real
 }
+
+/** 允许落盘的工具链文件名白名单——目标文件名由我们定，不接受调用方指定。 */
+export const TOOLCHAIN_FILENAMES = ['fetch_pack.py', 'compile_timeline.py', 'assemble.sh'] as const
+
+/** 写文件比读文件更危险：这些前缀下一律不落盘（覆盖系统/可执行文件路径的后果不可逆）。 */
+const WRITE_DENY_PREFIXES = [
+  '/etc/', '/private/etc/', '/proc/', '/sys/', '/bin/', '/sbin/',
+  '/usr/', '/System/', '/Library/', '/boot/', '/dev/',
+]
+
+/**
+ * 校验「把工具链脚本写到哪个目录」。
+ *
+ * 与上传守卫同源但更严：上传只是读别人的文件，写盘则可能覆盖掉目标位置已有的东西。
+ * 三条规则：
+ *   ① 必须是绝对路径 —— 相对路径在 MCP 进程里解析基准不明（进程 cwd 未必是调用方以为的目录）；
+ *   ② realpath 后不得含以 '.' 开头的路径段（~/.ssh、~/.config、.git 全部命中）；
+ *   ③ 不得落在系统/可执行目录前缀下。
+ * 文件名不由调用方决定（见 TOOLCHAIN_FILENAMES），所以不存在 ../ 穿越写任意文件的路径。
+ */
+export function assertSafeToolchainDir(
+  dirPath: string,
+  resolve: (p: string) => string = realpathSync,
+): string {
+  if (!dirPath || !dirPath.startsWith('/')) {
+    throw new Error(
+      `dir 必须是绝对路径(收到 "${dirPath}")。MCP 进程的工作目录与你的不一定相同,`
+      + '相对路径会写到意料之外的地方。',
+    )
+  }
+  let real: string
+  try {
+    real = resolve(dirPath)
+  } catch {
+    throw new Error(`dir 不存在:${dirPath}。请先创建该目录再重试(本工具不递归建目录)。`)
+  }
+  const segments = real.split(sep)
+  if (segments.some(s => s.startsWith('.') && s.length > 1)) {
+    throw new Error(
+      `dir 位于隐藏目录(${real}),已拒绝——不向 ~/.ssh、~/.config、.git 这类目录写文件。`
+      + '换一个普通工作目录。',
+    )
+  }
+  if (WRITE_DENY_PREFIXES.some(p => real.startsWith(p))) {
+    throw new Error(`dir 位于系统目录(${real}),已拒绝写入。换一个你自己的工作目录。`)
+  }
+  return real
+}

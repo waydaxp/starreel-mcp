@@ -1,6 +1,6 @@
 {
   "name": "@starreel/mcp",
-  "version": "0.1.39",
+  "version": "0.1.43",
   "mcpName": "ai.starreel/starreel",
   "description": "StarReel MCP server — drive the AI short-drama production pipeline (script → storyboards → frames → video → final cut) from Claude, Cursor, or any MCP client",
   "license": "MIT",
@@ -13,6 +13,8 @@
     "README.md",
     "SKILL.md",
     "server.json",
+    "assets",
+    "README.zh-CN.md",
     "openapi.json"
   ],
   "scripts": {

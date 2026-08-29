@@ -82,8 +82,10 @@ const WORKFLOW_HINT =
   '建剧/改设定时 AI 应主动告知客户「默认用视频原声,如需 TTS 配音把 use_clip_audio 设 false」,让客户选。' +
   '★图片模型默认香蕉2(Nano Banana 2 = gemini-3.1-flash-image·整剧统一画风):create_drama/update_project_settings 的 image_model 设,不传即默认香蕉2;' +
   '可选 gemini-3-pro-image(香蕉Pro·更精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream5.0)/gpt-image-2(ChatGPT Image2);generate_frames 可临时覆盖某次。' +
-  '★视频引擎二选一(drama级·AI 建剧时应主动告知客户并给价差让客户定):seedance-2.5(默认·全能力·720p约212点/秒) vs ' +
-  'hailuo-3(MiniMax H3·灰度·约1/3成本70点/秒·原生对白音效·2K·单镜约6分钟·就地编辑/延长/关键帧组暂不可用);' +
+  '★视频引擎四选一(drama级·AI 建剧时应主动告知客户并给价差让客户定):seedance-2.5(默认·全能力·720p约212点/秒) / ' +
+  'hailuo-3(MiniMax H3·约1/3成本70点/秒·原生对白音效·2K·单镜约6分钟·支持就地编辑与续写) / ' +
+  'wan3.0(WAN 3.0·约4折成本84点/秒·原生对白音效·1080P·单次最长30秒·最短2秒计费·支持就地编辑与续写·★写实真人720p+可能被厂商审核拒,风格化/动画剧适用) / ' +
+  'wan3.0-prime(高速版·能力同wan3.0·速度约2×·费率1.5×=126点/秒);' +
   'create_drama/update_project_settings 的 video_engine 设,★必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。' +
   '★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。' +
   '★改某一镜画面 / 换定妆图后要让新图生效,走**单镜重生 generate_shot_frame**(平台自动带该镜身份锚·场景道具参考·画风锚,保全片一致);' +
@@ -117,7 +119,7 @@ const FRAME_TYPE_ARG = z.enum(['first_frame', 'last_frame', 'both'])
 const ASPECT_RATIOS = ['9:16', '16:9', '1:1', '4:5', '4:3', '21:9'] as const
 const VIDEO_RESOLUTIONS = ['480p', '720p', '1080p', '4k'] as const
 // 剧级视频引擎(与后端 video-engine-policy 白名单同源;短 id,后端归一化)。
-const VIDEO_ENGINES = ['seedance-2.5', 'hailuo-3'] as const
+const VIDEO_ENGINES = ['seedance-2.5', 'hailuo-3', 'wan3.0', 'wan3.0-prime'] as const
 
 // 「项目设定页」通用视觉/音频/字幕/转场设定 —— create_drama 与 update_project_settings 共用。
 // 后端内部 PUT /dramas 已接受写库,facade 白名单 Wave3 已放行(produce-create-fields.ts)。
@@ -128,10 +130,12 @@ const PROJECT_SETTINGS_FIELDS = {
     'gemini-3.1-flash-image(香蕉2·默认·71点)/gemini-3-pro-image(香蕉Pro·精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·31点)/' +
     'doubao-seedream-5-0-260128(Seedream 5.0)/gpt-image-2(ChatGPT Image 2)。建剧即定、整剧统一;generate_frames 可临时覆盖某次出图'),
   // drama 级视频引擎(整剧统一,单镜/批量/场景组/重生全走它)
-  video_engine: z.enum(VIDEO_ENGINES).optional().describe('视频引擎(★drama级·整剧统一·AI应主动告知客户可选并给出两档价差让客户定):' +
+  video_engine: z.enum(VIDEO_ENGINES).optional().describe('视频引擎(★drama级·整剧统一·AI应主动告知客户可选并给出价差让客户定):' +
     'seedance-2.5(默认·全能力:帧链/场景组/就地编辑/延长/参考图锚·720p约212点/秒) / ' +
-    'hailuo-3(MiniMax H3·灰度:约1/3成本 720p 70点/秒·原生对白与音效·支持2K·单镜生成约6分钟·支持就地编辑(强保真)与成片续写·关键帧组/时间戳区间暂不可用;编辑/续写输入视频另按秒计费)。' +
-    '★必须在出视频**前**设置——切换不回溯已生成的镜头,同剧混用两引擎会有画风/身份漂移风险'),
+    'hailuo-3(MiniMax H3:约1/3成本 720p 70点/秒·原生对白与音效·支持2K·单镜约6分钟·支持就地编辑(强保真)与成片续写·关键帧组/时间戳区间暂不可用;编辑/续写输入视频另按秒计费) / ' +
+    'wan3.0(WAN 3.0:约4折成本 720p 84点/秒·原生对白与音效·支持1080P·单次最长30秒·最短2秒计费·支持就地编辑(强语义)与成片续写·关键帧组/时间戳区间暂不可用;★写实真人720p+可能被厂商审核拒绝,风格化/动画剧适用) / ' +
+    'wan3.0-prime(WAN 3.0 高速版:能力同wan3.0·出片约2×·费率1.5×=720p 126点/秒)。' +
+    '★必须在出视频**前**设置——切换不回溯已生成的镜头,同剧混用引擎会有画风/身份漂移风险'),
   // 整剧视觉一致性锚(注入所有出图/视频 prompt,决定跨镜一致)
   cinematography_prompt: z.string().optional().describe('摄影DNA:镜头/镜片/光圈/调色一揽子,注入所有出图/视频prompt,整剧镜头一致'),
   art_bible: z.string().optional().describe('美术圣经:色调/材质/气质,注入所有生图prompt,统一视觉风格'),
@@ -778,14 +782,14 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   server.tool(
     'edit_video_shot',
     '确认后就地编辑某镜视频:按 instruction 改,可带参考图/视频/音频,或用 start_sec/end_sec 做区间替换。' +
-      '可用 model 为本次编辑单独选引擎(与剧引擎可不同):hailuo-3=MiniMax H3 强保真编辑约1/3成本,但不支持 start_sec/end_sec 区间(传了会 400);' +
-      '编辑/续写的输入视频在 H3 上另按秒计费。' +
+      '可用 model 为本次编辑单独选引擎(与剧引擎可不同):hailuo-3=MiniMax H3 强保真编辑约1/3成本;wan3.0/wan3.0-prime=WAN 3.0 强语义编辑约4折(环境可能跟随指令扩写);' +
+      'H3/WAN 均不支持 start_sec/end_sec 区间(传了会 400),编辑/续写的输入视频在 H3/WAN 上另按秒计费。' +
       CONFIRM_HINT,
     {
       storyboard_id: z.number().int().positive(),
       quote_id: z.string().describe('来自 quote_edit_video_shot'),
       instruction: z.string().describe('编辑指令(如"把背景换成夜晚")'),
-      model: z.enum(VIDEO_ENGINES).optional().describe('本次编辑的引擎(缺省=跟随剧 video_engine);hailuo-3 不支持区间编辑'),
+      model: z.enum(VIDEO_ENGINES).optional().describe('本次编辑的引擎(缺省=跟随剧 video_engine);hailuo-3/wan3.0/wan3.0-prime 不支持区间编辑'),
       reference_image_urls: z.array(z.string()).max(9).optional().describe('参考图 URL(先 upload_image 拿)'),
       reference_video_urls: z.array(z.string()).max(2).optional(),
       reference_audio_urls: z.array(z.string()).max(3).optional(),

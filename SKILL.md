@@ -148,17 +148,24 @@ content that will be rejected.
    `gemini-3-pro-image` (Nano Banana Pro, finer, pricier), `gemini-3.1-flash-lite-image`
    (Lite, cheap), `doubao-seedream-5-0-260128` (Seedream 5.0), `gpt-image-2`.
    **Video engine**: videos use a drama-level engine, set via `create_drama` /
-   `update_project_settings` field `video_engine`. Two options — surface the
-   choice to the customer with the price gap and let them decide:
+   `update_project_settings` field `video_engine`. Four options — surface the
+   choice to the customer with the price gaps and let them decide:
    `seedance-2.5` (default; full capability: frame chain / scene groups /
-   in-place edit / extend / reference anchors; 720p ≈ 212 pts/s) or `hailuo-3`
-   (MiniMax H3, beta; ≈1/3 cost at 70 pts/s for 720p; native dialogue & SFX
-   baked into the clip; up to 2K; ~6 min per shot; in-place edit — high
-   fidelity — and episode extend supported, with the input video billed
-   per second on top of the output; keyframe groups and time-range edit
-   not available — `edit_video_shot` with `model: hailuo-3` rejects
-   `start_sec`/`end_sec`). `edit_video_shot` also takes a per-call `model`
-   so one shot can be edited on a different engine than the drama's.
+   in-place edit / extend / reference anchors; 720p ≈ 212 pts/s);
+   `hailuo-3` (MiniMax H3; ≈1/3 cost at 70 pts/s for 720p; native dialogue &
+   SFX baked in; up to 2K; ~6 min per shot; in-place edit — high fidelity —
+   and episode extend supported, input video billed per second on top);
+   `wan3.0` (WAN 3.0; ≈40% cost at 84 pts/s for 720p; native dialogue & SFX;
+   up to 1080P; up to 30s per shot and bills from 2s — no 4s floor; ~2 min
+   per shot; in-place edit — strong semantic, background may follow the
+   instruction — and episode extend supported, input video billed per second;
+   ⚠ realistic human faces at 720p+ may be rejected by vendor moderation, so
+   prefer it for stylized/animated dramas, empty shots and product shots);
+   `wan3.0-prime` (same capability as wan3.0, ~2× faster, 1.5× rate =
+   126 pts/s at 720p). Keyframe groups and time-range edit are not available
+   on hailuo-3 / wan3.0 / wan3.0-prime — `edit_video_shot` rejects
+   `start_sec`/`end_sec` on them. `edit_video_shot` also takes a per-call
+   `model` so one shot can be edited on a different engine than the drama's.
    **Set the drama engine before generating any video**:
    switching never re-renders existing shots, and mixing engines inside one
    drama risks style/identity drift.

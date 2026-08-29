@@ -166,6 +166,18 @@ content that will be rejected.
    on hailuo-3 / wan3.0 / wan3.0-prime — `edit_video_shot` rejects
    `start_sec`/`end_sec` on them. `edit_video_shot` also takes a per-call
    `model` so one shot can be edited on a different engine than the drama's.
+   **How to choose (guide the customer proactively)**: ① realistic live-action
+   dramas → `seedance-2.5` (best instruction-following and face detail), or
+   `hailuo-3` to cut cost to ~1/3 (slower, ~6 min/shot); ② stylized / animated /
+   3D-cartoon dramas, empty shots and product shots → `wan3.0` (~40% cost,
+   2s-minimum billing), or `wan3.0-prime` when delivery speed matters;
+   ③ NEVER pick wan3.0/prime for realistic live-action — WAN's output
+   moderation consistently rejects realistic human faces at 720p+ and retries
+   don't help. **Resolution by engine** (`video_resolution`): drafts/iteration →
+   480p on WAN dramas (cheapest) or 720p elsewhere; final delivery →
+   seedance stays 720p (HD tiers off sale), hailuo-3 → 1080p (= 2K, 112 pts/s),
+   WAN → 1080p (168 pts/s). hailuo-3 has no separate 480p tier (a 480p request
+   still bills at 768P).
    **Set the drama engine before generating any video**:
    switching never re-renders existing shots, and mixing engines inside one
    drama risks style/identity drift.

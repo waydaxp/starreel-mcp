@@ -82,11 +82,12 @@ const WORKFLOW_HINT =
   '建剧/改设定时 AI 应主动告知客户「默认用视频原声,如需 TTS 配音把 use_clip_audio 设 false」,让客户选。' +
   '★图片模型默认香蕉2(Nano Banana 2 = gemini-3.1-flash-image·整剧统一画风):create_drama/update_project_settings 的 image_model 设,不传即默认香蕉2;' +
   '可选 gemini-3-pro-image(香蕉Pro·更精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream5.0)/gpt-image-2(ChatGPT Image2);generate_frames 可临时覆盖某次。' +
-  '★视频引擎四选一(drama级·AI 建剧时应主动告知客户并给价差让客户定):seedance-2.5(默认·全能力·720p约212点/秒) / ' +
-  'hailuo-3(MiniMax H3·约1/3成本70点/秒·原生对白音效·2K·单镜约6分钟·支持就地编辑与续写) / ' +
-  'wan3.0(WAN 3.0·约4折成本84点/秒·原生对白音效·1080P·单次最长30秒·最短2秒计费·支持就地编辑与续写·★写实真人720p+可能被厂商审核拒,风格化/动画剧适用) / ' +
-  'wan3.0-prime(高速版·能力同wan3.0·速度约2×·费率1.5×=126点/秒);' +
-  'create_drama/update_project_settings 的 video_engine 设,★必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。' +
+  '★视频引擎四选一(drama级·AI 建剧时必须主动按剧选型引导并给价差让客户定):' +
+  '【选型决策树】①写实真人剧→seedance-2.5(默认·指令遵循/人脸细节最强·720p 212点/秒),预算敏感可 hailuo-3(约1/3成本70点/秒·强保真编辑·但单镜约6分钟);' +
+  '②风格化/动画/3D卡通剧·空镜·产品镜→wan3.0(约4折84点/秒·最长30秒·最短2秒计费·单镜约2分钟),赶交付用 wan3.0-prime(126点/秒·约1分钟);' +
+  '③★写实真人剧绝不选 wan3.0/prime——WAN 输出侧真人脸审核在 720p+ 一致拒、重试救不回;' +
+  '【分辨率决策】草稿/迭代期:WAN 剧 480p(42点/秒最省)、其余 720p;成片交付:seedance 剧 720p(高清档停售)、hailuo-3 剧 1080p(=2K·112点/秒)、WAN 剧 1080p(168点/秒);hailuo-3 无独立 480p 档(选了也按 768P 计费);' +
+  'create_drama/update_project_settings 的 video_engine/video_resolution 设,★都必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。' +
   '★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。' +
   '★改某一镜画面 / 换定妆图后要让新图生效,走**单镜重生 generate_shot_frame**(平台自动带该镜身份锚·场景道具参考·画风锚,保全片一致);' +
   'generate_frames 只批量补「缺帧」的镜、已有首帧的镜跳过(正常、不是"拒绝"),尾帧用 frame_type=last_frame 可批量补。换定妆图(set_character_portrait)后响应里的 stale_frames 就是被旧图污染、需逐镜重生的镜。' +
@@ -130,7 +131,7 @@ const PROJECT_SETTINGS_FIELDS = {
     'gemini-3.1-flash-image(香蕉2·默认·71点)/gemini-3-pro-image(香蕉Pro·精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·31点)/' +
     'doubao-seedream-5-0-260128(Seedream 5.0)/gpt-image-2(ChatGPT Image 2)。建剧即定、整剧统一;generate_frames 可临时覆盖某次出图'),
   // drama 级视频引擎(整剧统一,单镜/批量/场景组/重生全走它)
-  video_engine: z.enum(VIDEO_ENGINES).optional().describe('视频引擎(★drama级·整剧统一·AI应主动告知客户可选并给出价差让客户定):' +
+  video_engine: z.enum(VIDEO_ENGINES).optional().describe('视频引擎(★drama级·整剧统一·AI必须按剧选型主动引导:写实真人剧→seedance-2.5 或降本 hailuo-3;风格化/动画/3D卡通/空镜/产品镜→wan3.0(赶交付 wan3.0-prime);写实真人剧绝不选 wan——720p+ 真人脸被厂商审核一致拒):' +
     'seedance-2.5(默认·全能力:帧链/场景组/就地编辑/延长/参考图锚·720p约212点/秒) / ' +
     'hailuo-3(MiniMax H3:约1/3成本 720p 70点/秒·原生对白与音效·支持2K·单镜约6分钟·支持就地编辑(强保真)与成片续写·关键帧组/时间戳区间暂不可用;编辑/续写输入视频另按秒计费) / ' +
     'wan3.0(WAN 3.0:约4折成本 720p 84点/秒·原生对白与音效·支持1080P·单次最长30秒·最短2秒计费·支持就地编辑(强语义)与成片续写·关键帧组/时间戳区间暂不可用;★写实真人720p+可能被厂商审核拒绝,风格化/动画剧适用) / ' +
@@ -199,7 +200,9 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       style: z.string().optional().describe('风格描述'),
       description: z.string().optional(),
       aspect_ratio: z.enum(ASPECT_RATIOS).optional().describe('画幅比例(默认 9:16 竖屏短剧)。★drama级锁定:建剧即定、之后所有出图/出视频/成片都用它,别中途改(改了已生成内容画幅不一致、漂移)'),
-      video_resolution: z.enum(VIDEO_RESOLUTIONS).optional().describe('视频分辨率(默认 720p;成本随分辨率上升)'),
+      video_resolution: z.enum(VIDEO_RESOLUTIONS).optional().describe('视频分辨率(默认 720p;成本随分辨率上升)。按引擎选:' +
+        'seedance-2.5 在售 480p/720p(高清档停售);hailuo-3 选 720p(=768P 70点/秒)或 1080p(=2K 112点/秒),无独立 480p 档;' +
+        'wan3.0/prime 三档全售(42/84/168,prime 63/126/252 点/秒)。草稿迭代用低档,成片交付才上高清'),
       setting_brief: z
         .string()
         .optional()

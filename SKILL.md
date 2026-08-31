@@ -351,7 +351,19 @@ The table above is for **generation failures**. A different class of report is
 
 ### "话没说完就切" / a line gets cut off mid-word
 
-Three distinct causes; check in this order, they need opposite fixes.
+**By far the most common cause is #2 — the vendor's clip never said the whole
+line.** Measured across the whole platform (2026-09-01, 282 audited shots with
+dialogue): 28% have a real defect, and *half of those shots were long enough for
+the line*. So do not start by lengthening shots.
+
+Run **`scan_dialogue_coverage`** (free) first — it tells you which of the causes
+below you actually have, per shot. `compose_episode` also reports the affected
+shots as advisory `dialogue_truncated`. Both read the same measurement: a
+word-level comparison of what the clip's audio says against the shot's line.
+Note `never_audited` in the report — those shots have never been measured, which
+is not the same as passing; `rescan: true` measures them (costs ASR time).
+
+Four distinct causes; they need **opposite** fixes, so identify the family first.
 
 1. **The line moved after the video was made.** If you edited `dialogue` on a
    shot whose video already existed, the video still speaks the *old* line —
@@ -360,11 +372,21 @@ Three distinct causes; check in this order, they need opposite fixes.
    `compose_episode` reports these as advisory `stale_video_after_edit`.
    **Fix:** `regenerate_shot_video` those shots, then compose. Never just
    re-compose — no amount of re-cutting can change what the video says.
-2. **The vendor never said the whole line.** When a shot is too short for the
-   line, native-audio engines just stop where they stop. Check the shot's own
-   clip, not the final cut. **Fix:** lengthen the shot (`update_shot.duration`)
-   and regenerate, or split it (`split_shot`).
-3. **The transition ate the tail.** A cross-fade pulls the *next* shot's start
+2. **The vendor stopped partway through the line** (family `truncated` — the
+   audio *is* the line, just not all of it). **Fix:** `regenerate_shot_video`;
+   vendors are non-deterministic about how much they say, so a re-roll often
+   lands the full line. Lengthening (`update_shot.duration`) is a second resort,
+   not the first move: the platform already raises a shot's duration to fit its
+   line whenever the shot is saved, so "too short for the line" is rarely what
+   actually happened.
+3. **The vendor said something other than the line** (family `off_script` — most
+   of the audio does not match the script at all: invented lines, repeats of the
+   previous shot, or just room tone). Lengthening does nothing here. **Fix:**
+   `regenerate_shot_video`; if the same drama keeps producing this, switch
+   engine. Measured per-engine rate of shots whose line was not delivered in
+   full: `seedance-2.5` 23% · `wan3.0` 44% · `hailuo-3` 50% (30 shots, small
+   sample). For dialogue-heavy work prefer `seedance-2.5`.
+4. **The transition ate the tail.** A cross-fade pulls the *next* shot's start
    backwards, covering the end of the current one. The platform now shortens or
    drops that transition automatically so it can never cover a spoken word, so
    you should not see this any more — if you do, report it.

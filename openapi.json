@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "StarReel Production API",
-    "version": "0.1.49",
-    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.49 tool surface (operationIds match MCP tool names 1:1)."
+    "version": "0.1.50",
+    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.50 tool surface (operationIds match MCP tool names 1:1)."
   },
   "servers": [
     {
@@ -2617,6 +2617,71 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "StarReel envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "description": "Operation result payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient prepaid balance (never overdrafts); response carries `needed` points"
+          }
+        }
+      }
+    },
+    "/episodes/{episode_id}/dialogue-coverage": {
+      "get": {
+        "operationId": "scan_dialogue_coverage",
+        "summary": "★客户报「话没说完就切 / 台词只念了一半」时先跑这个",
+        "description": "★客户报「话没说完就切 / 台词只念了一半」时先跑这个。默认**免费零扣费**(只读已落库的转录审计结果)。把该集每个原声镜的视频音轨与台词做词级比对,按族给出结论:truncated(念到一半就停) / off_script(念的大半不是台词:自说自话、重复上一镜、只有环境音) / extra_speech(台词念全了但还多念) / minor_gap(零星缺词,属转写误差,不必管) / ok。★判读:三个可上报的族**处置方向不同**,别一律加长镜头——实测镜长够的镜里仍有 21% 没念全,「太短」很少是真因(平台保存分镜时已按台词自动抬时长)。truncated/off_script 的正解都是 regenerate_shot_video(厂商每次说多少是随机的,重掷常能拿到整句);同一剧反复 off_script 则换引擎。★never_audited 是本报告最重要的一栏:那些镜从没被检测过,「没测过」不等于「没问题」。rescan=true 会对它们补跑 ASR 比对(耗算力、非瞬时,limit 控制单次上限),默认不跑。TTS 配音镜不在范围内(TTS 必然念全,低覆盖率只会是转写误差)。同一集若还伴随「切太快」,那是另一回事,跑 scan_intra_shot_cuts。",
+        "tags": [
+          "episodes"
+        ],
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          },
+          {
+            "name": "rescan",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 60
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "StarReel envelope",

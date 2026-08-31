@@ -953,6 +953,34 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       jsonResult(await client.produceGet(`/episodes/${episode_id}/intra-shot-cuts`)),
   )
   server.tool(
+    'scan_dialogue_coverage',
+    '★客户报「话没说完就切 / 台词只念了一半」时先跑这个。默认**免费零扣费**(只读已落库的转录审计结果)。'
+      + '把该集每个原声镜的视频音轨与台词做词级比对,按族给出结论:'
+      + 'truncated(念到一半就停) / off_script(念的大半不是台词:自说自话、重复上一镜、只有环境音) / '
+      + 'extra_speech(台词念全了但还多念) / minor_gap(零星缺词,属转写误差,不必管) / ok。'
+      + '★判读:三个可上报的族**处置方向不同**,别一律加长镜头——实测镜长够的镜里仍有 21% 没念全,'
+      + '「太短」很少是真因(平台保存分镜时已按台词自动抬时长)。truncated/off_script 的正解都是'
+      + ' regenerate_shot_video(厂商每次说多少是随机的,重掷常能拿到整句);同一剧反复 off_script 则换引擎。'
+      + '★never_audited 是本报告最重要的一栏:那些镜从没被检测过,「没测过」不等于「没问题」。'
+      + 'rescan=true 会对它们补跑 ASR 比对(耗算力、非瞬时,limit 控制单次上限),默认不跑。'
+      + 'TTS 配音镜不在范围内(TTS 必然念全,低覆盖率只会是转写误差)。'
+      + '同一集若还伴随「切太快」,那是另一回事,跑 scan_intra_shot_cuts。',
+    {
+      episode_id: z.number().int().positive(),
+      rescan: z.boolean().optional()
+        .describe('对从未检测过的镜补跑转写比对(耗算力,非瞬时)。默认 false = 只读已有结果'),
+      limit: z.number().int().positive().max(60).optional()
+        .describe('rescan 单次补测镜数上限,默认 20、最大 60;被上限截掉的镜数在响应 rescan_skipped_by_limit 里明说'),
+    },
+    async ({ episode_id, rescan, limit }) => {
+      const qs = new URLSearchParams()
+      if (rescan) qs.set('rescan', '1')
+      if (limit != null) qs.set('limit', String(limit))
+      const suffix = qs.toString() ? `?${qs.toString()}` : ''
+      return jsonResult(await client.produceGet(`/episodes/${episode_id}/dialogue-coverage${suffix}`))
+    },
+  )
+  server.tool(
     'update_shot',
     '逐镜编辑:改单个分镜的文本内容(景别/动作/台词/画面描述/运镜等)与角色绑定(character_ids)。只传要改的字段、其余不动。' +
       '**免费**(纯文本写库)。★改 dialogue 会自动失效本镜已生成的 TTS 配音与字幕(需重出 tts);' +

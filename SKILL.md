@@ -4,7 +4,7 @@ description: >-
   Operating skill for any AI agent driving the StarReel short-drama production
   pipeline (script → rewrite → extract → portraits + sheets → storyboards → frames →
   video → voiceover → final cut) over MCP or REST. Covers the ordered workflow,
-  the ten operating disciplines (prepaid billing, quote-before-spend, retryable
+  the eleven operating disciplines (prepaid billing, quote-before-spend, retryable
   failure handling, content compliance, tenancy), and a failure playbook.
 license: MIT
 homepage: https://api.shortreelai.com/docs/mcp
@@ -28,9 +28,14 @@ One episode, the **full** pipeline — nothing skipped:
 
 ```
 create_drama → set_script(raw) → rewrite_script(AI draft, user may edit)
-  → extract_assets(cast/scenes/props) → generate_portraits_and_sheets(portraits + sheets = the shot consistency anchor)
-  → storyboards → frames → videos → generate_tts(voiceover) → compose_episode → final cut (.mp4 link)
+  → [review_script] → extract_assets(cast/scenes/props)
+  → storyboards → [review_storyboards]
+  → generate_portraits_and_sheets(portraits + sheets = the shot consistency anchor)
+  → frames → [review_frames] → videos → generate_tts(voiceover) → compose_episode → final cut (.mp4 link)
 ```
+
+The three `[review_*]` steps are free and **enforced** — see discipline 11.
+Nothing downstream of them runs until you have reviewed that layer.
 
 `project_type` picks the flavor at `create_drama`: `drama` / `ad` / `mv` /
 `brand_film`. MV replaces `rewrite_script` with
@@ -77,7 +82,7 @@ Don't ask the user at every step. Sort work into three tiers:
    and show a quote, then run on their OK** — neither silently skip them nor
    auto-charge.
 
-## The ten disciplines (hard rules)
+## The eleven disciplines (hard rules)
 
 These are not suggestions. Violating them wastes the user's money or produces
 content that will be rejected.
@@ -214,6 +219,42 @@ content that will be rejected.
     key in an environment variable or secrets manager, never in code or logs.
     The 15-min token auto-re-exchanges; a leaked key is revoked in Settings.
 
+11. **Review every layer before you spend on the next one — free, and three of
+    them are enforced.** Never run the pipeline straight through from
+    `rewrite_script` to `compose_episode`. A flaw in the rewritten draft gets
+    copied into character profiles, then storyboards, then frames, then video —
+    by the time you see it in the final cut, the whole episode has to be redone,
+    and every redo is another real charge. Reviewing costs nothing.
+
+    **Three hard gates** (the server returns `400` if you skip them):
+
+    | After you produce | Run | Before you call |
+    |---|---|---|
+    | the rewritten draft | `review_script` | `extract_assets`, `generate_storyboards` |
+    | storyboards | `review_storyboards` | `generate_frames` |
+    | shot frames | `review_frames` | `generate_videos` |
+
+    Each review returns `{ pass, error_count, warning_count, findings[],
+    review_token }`. Every finding carries `code` (problem type), `shots`
+    (which shot numbers), and `action` (which tool fixes it) — relay them to the
+    user verbatim, fix per `action`, then re-review. Pass the `review_token` to
+    the downstream `generate_*` call. If the artifact changes after the review,
+    the token expires by design — just re-review (still free). When a review has
+    errors the gate holds; only pass `acknowledge_review: true` when the user
+    knows what's wrong and explicitly chooses to proceed anyway. Never make that
+    call for them.
+
+    **Soft checkpoints** (not enforced, also free, still expected): `run_precheck`
+    before any image or video generation (it catches shots the vendor will
+    reject — pure wasted spend otherwise); `get_health_report` after
+    storyboards; `get_characters` after portraits to confirm every on-screen
+    character has an image and a sheet; `get_storyboards` after frames and after
+    videos to read `frame_status` / `video_status` / `fail_reason` / `fail_hint`
+    and fix failed shots before moving on; `get_pipeline_status` before the
+    final cut to confirm no shot is missing. `review_all` gives a whole-episode
+    checkup at any time (it issues no token — the gates want a review of the
+    *current* artifact).
+
 ## Script fidelity — auto two-pass rewriting
 
 `rewrite_script` routes automatically based on what the user put into
@@ -302,6 +343,63 @@ content**; **overdue / token → not self-healable (tell user / wait)**; **netwo
 / timeout / transient → retry**. Failed spends are auto-refunded (pre-hold →
 refund on failure); you never compensate manually.
 
+## Quality-complaint triage (the cut looks/sounds wrong)
+
+The table above is for **generation failures**. A different class of report is
+"the video generated fine, but the cut is wrong." These never surface as a
+`fail_reason` — nothing failed. Diagnose by symptom:
+
+### "话没说完就切" / a line gets cut off mid-word
+
+Three distinct causes; check in this order, they need opposite fixes.
+
+1. **The line moved after the video was made.** If you edited `dialogue` on a
+   shot whose video already existed, the video still speaks the *old* line —
+   for native-audio engines the voice is baked into the picture. Symptom that
+   gives it away: the line seems to have "jumped to a different shot."
+   `compose_episode` reports these as advisory `stale_video_after_edit`.
+   **Fix:** `regenerate_shot_video` those shots, then compose. Never just
+   re-compose — no amount of re-cutting can change what the video says.
+2. **The vendor never said the whole line.** When a shot is too short for the
+   line, native-audio engines just stop where they stop. Check the shot's own
+   clip, not the final cut. **Fix:** lengthen the shot (`update_shot.duration`)
+   and regenerate, or split it (`split_shot`).
+3. **The transition ate the tail.** A cross-fade pulls the *next* shot's start
+   backwards, covering the end of the current one. The platform now shortens or
+   drops that transition automatically so it can never cover a spoken word, so
+   you should not see this any more — if you do, report it.
+
+### "切太快" / "一个镜头里画面跳来跳去"
+
+Run **`scan_intra_shot_cuts`** (free) before touching anything. What a viewer
+perceives as cutting speed is *shot seams + cuts the vendor made inside a single
+shot*, and the second half is invisible in the shot list, in the timeline, and
+in every duration number you can read back. If `shots_with_cuts` covers most of
+the episode, re-cutting, re-pacing or changing transitions will not help — the
+extra cuts are inside the clips themselves.
+
+`engine_suspect: true` means the drama runs on WAN, the known high-rate source:
+measured **11/12 shots** with intra-shot cuts, versus 1/6 on seedance-2.5 and
+0/5 on hailuo-3. Prompt-level constraints do not stop it (the negative
+constraint is already in the prompt and was measured ineffective). The only
+real fix is `regenerate_shot_video` on those shots after switching the drama to
+`seedance-2.5` or `hailuo-3`.
+
+### Choosing an engine so this never comes up
+
+Pick the engine **before** generating video — switching does not retroactively
+fix shots already made. For anything with dialogue and a story to follow, use
+`seedance-2.5` (or `hailuo-3` to cut cost). Reach for `wan3.0` when the shots
+are short and stylised — animation, 3D cartoon, empty/scenery shots, product
+shots — where an extra angle change inside a shot does not read as a mistake.
+Two hard limits on WAN: realistic human faces at 720p+ are rejected outright by
+vendor moderation, and it re-cuts inside shots as described above.
+
+Also: `cinematography_prompt` is injected into **every single shot**. Write
+single-shot photographic properties there (lens, depth of field, lighting,
+grade). Writing a whole-episode camera sequence ("aerial wide to open … silhouette
+to close") tells the vendor to fit that entire sequence into each 3-second shot.
+
 ## Quick tool reference
 
 - **Discover / create**: `list_project_options`, `create_drama`,
@@ -334,5 +432,8 @@ refund on failure); you never compensate manually.
 - **Read back (all free)**: `list_dramas`, `get_drama`, `get_characters`,
   `get_scenes`, `get_assets`, `get_jobs`, `get_pipeline_status`,
   `get_cost_estimate`, `get_budget_status`
+- **Cut QA (all free)**: `scan_intra_shot_cuts` (vendor cutting inside a shot —
+  run this first on any "切太快" report), `recommend_trim_window` (action ends up
+  outside the kept window)
 
 Full reference: https://api.shortreelai.com/docs/mcp

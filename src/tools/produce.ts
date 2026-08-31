@@ -46,6 +46,22 @@ const CONFIRM_HINT =
   '⚠️ 批量报价确认流程:先调对应的 quote_* 工具,把返回的 estimated_points 原样告诉用户,' +
   '用户明确同意后,才用返回的 quote_id 调本工具。不要擅自确认。'
 
+// ★分阶段审查硬闸(v0.9.1076):三个大额收费步必须先过本层审查才放行。
+// 设计意图=防「盲推产废片」:改写稿的问题会被资产/分镜/出图逐层放大,等成片才发现
+// 就是整集重来、且每次重来都真扣厂商的钱。审查全部免费,拦下来不花一分钱。
+const REVIEW_GATE_HINT = (tool: string, layer: string) =>
+  `\n★【${layer}审查硬闸·免费】本步前必须先调 ${tool}:把返回的 findings 逐条原样告诉客户` +
+  `(每条带 code=问题类型、shots=命中镜号、action=该调哪个工具修),再把 review_token 传进本工具。` +
+  `未审查会被 400 拒。审查后又改了内容 → token 自动失效,复审一次即可(仍免费)。` +
+  `有 error 时默认拦截;客户知情并坚持照现状继续,才带 acknowledge_review:true——` +
+  `带病推进大概率产出废片且照常扣费,不要替客户做这个决定。`
+
+/** 三个被闸的收费工具共用的参数(zod 形状,展开进各自 schema)。 */
+const REVIEW_ARGS = {
+  review_token: z.string().optional().describe('★来自本层 review_* 工具的凭据(受闸项目必填;缺了会 400 并告诉你该调哪个审查工具)'),
+  acknowledge_review: z.boolean().optional().describe('审查有 error 时,客户已知情并明确要求照现状继续才传 true(默认拦截)'),
+}
+
 // 完整工作流顺序(照 get_pipeline_status 的 10 步真相走,不要跳步):
 //   create_drama → set_script(原始) → rewrite_script(AI改写) → [get_script/edit_rewritten_script 审改]
 //   → extract_assets(角色/场景/道具) → quote/generate_storyboards(先分镜·纯文本拆镜)
@@ -60,7 +76,19 @@ const WORKFLOW_HINT =
   '★visual_lock/art_bible 只写画面级/世界级锁(镜头语言·环境·美术基调·禁入元素),**绝不为具体角色钉服装/发型/外观细节**——' +
   '角色外观的唯一真相源是 extract_assets 产出的人物档案(要改走 update_character);两处都写必然互相矛盾,' +
   '定妆图跟档案、设定图跟视觉锁,一致性闸按定妆图拒收 → 设定图/镜头帧**结构性连拒**,重掷多少次都过不了、纯白花钱。' +
-  '②【产线主干·按序不跳步·★先分镜再建资产】set_script→rewrite_script→extract_assets→storyboards(先分镜·纯文本拆镜)→' +
+  '★★【逐环节审查协议·全部免费·这是防废片的主线,不是可选项】每个环节产出后先审查、把结论原样告诉客户,再进下一步。' +
+  '**三道硬闸(不过会被 400 拒)**:①改写稿产出后 → review_script(在 extract_assets / generate_storyboards 之前);' +
+  '②分镜产出后 → review_storyboards(在 generate_frames 之前);③镜头图片产出后 → review_frames(在 generate_videos 之前)。' +
+  '每次审查返回 review_token,把它随下游收费工具一起传;findings 逐条讲给客户(code=问题类型·shots=命中镜号·action=该调哪个工具修),' +
+  '按 action 修完后**复审**再走。审查后又改了内容 → token 自动失效,复审一次即可(免费)。' +
+  '有 error 时默认拦截,只有客户明确知情并坚持才带 acknowledge_review:true——别替客户做这个决定。' +
+  '**软引导(不阻断但强烈建议,同样免费)**:出图/出视频前跑 run_precheck(揪出必被厂商拒的镜,防白花钱);' +
+  '分镜后跑 get_health_report;定妆图出完用 get_characters 核对每个出场角色都有 image/sheet;' +
+  '出帧后用 get_storyboards 看 frame_status 与 fail_reason/fail_hint(failed 的镜先修再往下,别带着废帧出视频);' +
+  '出视频后同样看 video_status;成片前用 get_pipeline_status 确认没有缺镜。' +
+  '★**禁止一路 generate 到底**:不审查就连推的做法,问题会在每一层被放大,最后整集废掉重来——' +
+  '而重来的每一次出图/出视频都是真扣费。审查全部免费,拦下来一分钱不花。' +
+  '②【产线主干·按序不跳步·★先分镜再建资产】set_script→rewrite_script→★review_script→extract_assets→storyboards(先分镜·纯文本拆镜)→★review_storyboards→' +
   '★剧本纪律(端点强制,绕不过):原始素材(梗概/大纲/成品稿都算)一律放 set_script,**必须经 rewrite_script 产出 AI 改写稿**——' +
   '把自己写好的剧本直接贴进 edit_rewritten_script 绕过改写会被 400 拒(没有改写稿就没有可改的对象),extract_assets 同样要求基于改写稿。' +
   '改写后的所有修改按 AI 产物的结构化格式做:改稿 edit_rewritten_script(润色/纠正)、人物档案 update_character、分镜 update_shot/replace_shot_dialogue——' +
@@ -69,7 +97,7 @@ const WORKFLOW_HINT =
   '且新版不保证保留旧版已改好的地方(三版实测会来回摆)。要修就 edit_rewritten_script 点改' +
   '(get_script 取全文 → 只改那几场、其余逐字照抄 → 提交整篇),免费秒级、结果确定;' +
   '误重跑用 get_script(include_previous=1) 回捞上一版。' +
-  'generate_portraits_and_sheets(定妆图+设定图·分镜后建只给出场角色出图更省)→assign_voices(分配音色)→frames→videos→generate_tts→compose;' +
+  'generate_portraits_and_sheets(定妆图+设定图·分镜后建只给出场角色出图更省)→assign_voices(分配音色)→frames→★review_frames→videos→generate_tts→compose;' +
   '★别先建角色形象/道具设定图/动作模板再分镜——分镜是纯文本步、不依赖任何图;资产在分镜后建更省更准(动作模板本就必须分镜后)。收费步照现有 quote 报价确认流程。' +
   '广告另需 add_product+generate_product_sheet;MV 走 set_mv_lyrics→generate_mv_story→generate_mv_script。' +
   '★世界观概念图=默认必做(提升整剧一致性、很多第三方平台漏做这步):分镜后默认调 generate_world_concept,' +
@@ -86,6 +114,10 @@ const WORKFLOW_HINT =
   '【选型决策树】①写实真人剧→seedance-2.5(默认·指令遵循/人脸细节最强·720p 212点/秒),预算敏感可 hailuo-3(约1/3成本70点/秒·强保真编辑·但单镜约6分钟);' +
   '②风格化/动画/3D卡通剧·空镜·产品镜→wan3.0(约4折84点/秒·最长30秒·最短2秒计费·单镜约2分钟),赶交付用 wan3.0-prime(126点/秒·约1分钟);' +
   '③★写实真人剧绝不选 wan3.0/prime——WAN 输出侧真人脸审核在 720p+ 一致拒、重试救不回;' +
+  '④★★叙事剧(有对白、讲连贯故事、镜头节奏要稳的)慎选 wan3.0/prime:WAN 会在**单个分镜片内自行换机位硬切**' +
+  '(实测 11/12 镜有镜内跳切,对照 seedance-2.5 仅 1/6、hailuo-3 为 0/5),成片观感是「一个镜头里画面跳来跳去、切太快」;' +
+  '这是厂商指令遵循弱、提示词层拦不住(我方负向约束早已在其中且实测无效),事后只能换引擎重生。' +
+  'WAN 适合镜头本就短平快的风格化/空镜/产品镜;要稳定单镜叙事请选 seedance-2.5 或 hailuo-3。生成后可用 scan_intra_shot_cuts 核查;' +
   '【分辨率决策】草稿/迭代期:WAN 剧 480p(42点/秒最省)、其余 720p;成片交付:seedance 剧 720p(高清档停售)、hailuo-3 剧 1080p(=2K·112点/秒)、WAN 剧 1080p(168点/秒);hailuo-3 无独立 480p 档(选了也按 768P 计费);' +
   'create_drama/update_project_settings 的 video_engine/video_resolution 设,★都必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。' +
   '★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。' +
@@ -134,11 +166,14 @@ const PROJECT_SETTINGS_FIELDS = {
   video_engine: z.enum(VIDEO_ENGINES).optional().describe('视频引擎(★drama级·整剧统一·AI必须按剧选型主动引导:写实真人剧→seedance-2.5 或降本 hailuo-3;风格化/动画/3D卡通/空镜/产品镜→wan3.0(赶交付 wan3.0-prime);写实真人剧绝不选 wan——720p+ 真人脸被厂商审核一致拒):' +
     'seedance-2.5(默认·全能力:帧链/场景组/就地编辑/延长/参考图锚·720p约212点/秒) / ' +
     'hailuo-3(MiniMax H3:约1/3成本 720p 70点/秒·原生对白与音效·支持2K·单镜约6分钟·支持就地编辑(强保真)与成片续写·关键帧组/时间戳区间暂不可用;编辑/续写输入视频另按秒计费) / ' +
-    'wan3.0(WAN 3.0:约4折成本 720p 84点/秒·原生对白与音效·支持1080P·单次最长30秒·最短2秒计费·支持就地编辑(强语义)与成片续写·关键帧组/时间戳区间暂不可用;★写实真人720p+可能被厂商审核拒绝,风格化/动画剧适用) / ' +
-    'wan3.0-prime(WAN 3.0 高速版:能力同wan3.0·出片约2×·费率1.5×=720p 126点/秒)。' +
+    'wan3.0(WAN 3.0:约4折成本 720p 84点/秒·原生对白与音效·支持1080P·单次最长30秒·最短2秒计费·支持就地编辑(强语义)与成片续写·关键帧组/时间戳区间暂不可用;★写实真人720p+可能被厂商审核拒绝,风格化/动画剧适用;★★会在单个分镜片内自行换机位硬切(实测11/12镜)→叙事剧慎用,详见选型决策树④) / ' +
+    'wan3.0-prime(WAN 3.0 高速版:能力同wan3.0·出片约2×·费率1.5×=720p 126点/秒;镜内自剪同 wan3.0)。' +
     '★必须在出视频**前**设置——切换不回溯已生成的镜头,同剧混用引擎会有画风/身份漂移风险'),
   // 整剧视觉一致性锚(注入所有出图/视频 prompt,决定跨镜一致)
-  cinematography_prompt: z.string().optional().describe('摄影DNA:镜头/镜片/光圈/调色一揽子,注入所有出图/视频prompt,整剧镜头一致'),
+  cinematography_prompt: z.string().optional().describe('摄影DNA:镜头/镜片/光圈/调色一揽子,注入所有出图/视频prompt,整剧镜头一致。' +
+    '★★写**单镜**摄影规格,不要写整部剧的镜头序列:本字段会被原样注入**每一个分镜**,' +
+    '写成「航拍大远景开场→中景→跟摇→推近→剪影收尾」这类序列 = 在要求厂商把 5 段机位塞进每个 3 秒镜。' +
+    '正确写法举例:「浅景深长焦,黄金时刻光线与体积光,逆光轮廓,冷暖对比」——只描述镜片/光线/调色等全片统一的摄影属性'),
   art_bible: z.string().optional().describe('美术圣经:色调/材质/气质,注入所有生图prompt,统一视觉风格'),
   visual_lock: z.string().optional().describe('视觉锁定:民族外貌/服装约束/禁止元素,最高优先级、无条件注入所有生图prompt'),
   video_style_prompt: z.string().optional().describe('视频风格锁定·正向风格词(前置注入,描述渲染质感/美术)'),
@@ -299,9 +334,11 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     'extract_assets',
     '从可拍稿提取角色/场景/道具(一次写三表,是下游一致性的地基)。后台异步,文本步后付不欠费。' +
       '前置:已 rewrite_script 产出改写稿(新项目强制;人物档案从改写稿提取才与剧本、分镜自洽)。' +
-      '★分钟级后台任务;用 get_run_status 判断是否还在跑,别拿 60 秒当失败判据。' + WORKFLOW_HINT,
-    { episode_id: z.number().int().positive() },
-    async ({ episode_id }) => jsonResult(await client.producePost(`/episodes/${episode_id}/extract`)),
+      '★分钟级后台任务;用 get_run_status 判断是否还在跑,别拿 60 秒当失败判据。' +
+      REVIEW_GATE_HINT('review_script', '改写稿') + WORKFLOW_HINT,
+    { episode_id: z.number().int().positive(), ...REVIEW_ARGS },
+    async ({ episode_id, review_token, acknowledge_review }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/extract`, { review_token, acknowledge_review })),
   )
 
   // ---------- 完整工作流进度 ----------
@@ -368,14 +405,18 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       '优化的**正常**时长,别因「一镜偏长」觉得有问题就重拆。已有分镜时后端会拦,确认重拆才带 confirm_replace=true。' +
       '★典型耗时 5~10 分钟(生产实测 7~8.4 分钟;**单次 LLM 调用就可能 3~7 分钟**)。' +
       '**60 秒、甚至 3 分钟内查不到分镜都是正常的**——用 get_run_status 判断是否还在跑。' +
-      'running:true 就继续等;重发一次等于把整集分镜重来一遍。' + CONFIRM_HINT,
+      'running:true 就继续等;重发一次等于把整集分镜重来一遍。' +
+      REVIEW_GATE_HINT('review_script', '改写稿') + CONFIRM_HINT,
     {
       episode_id: z.number().int().positive(),
       quote_id: z.string().describe('来自 quote_storyboards'),
       confirm_replace: z.boolean().optional().describe('本集已有分镜时必须 true 才重拆(会替换整集所有分镜,已出图白费)'),
+      ...REVIEW_ARGS,
     },
-    async ({ episode_id, quote_id, confirm_replace }) =>
-      jsonResult(await client.producePost(`/episodes/${episode_id}/storyboards/generate`, confirm_replace ? { quote_id, confirm_replace } : { quote_id })),
+    async ({ episode_id, quote_id, confirm_replace, review_token, acknowledge_review }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/storyboards/generate`, {
+        quote_id, review_token, acknowledge_review, ...(confirm_replace ? { confirm_replace } : {}),
+      })),
   )
   server.tool(
     'get_storyboards',
@@ -431,6 +472,45 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     { episode_id: z.number().int().positive() },
     async ({ episode_id }) => jsonResult(await client.produceGet(`/episodes/${episode_id}/health-report`)),
   )
+
+  // ---------- 分阶段审查(三道硬闸的凭据来源;全部免费) ----------
+  // 每层审查返回 { pass, error_count, warning_count, findings[], review_token }。
+  // findings 每条 = { level, code, shots?, count?, action } —— code 是稳定问题类型码、
+  // action 直接告诉你该调哪个工具去修,照着做即可,不需要理解平台内部判据。
+  server.tool(
+    'review_script',
+    '【第①道硬闸·免费】审查 AI 改写稿:对白行长度、情绪转折完整性、开场钩子、末场悬念。' +
+      '★extract_assets 与 generate_storyboards 之前必须先跑本工具——人物档案和分镜都从改写稿派生,' +
+      '稿子里的问题会被逐层放大到定妆图/出图/出视频,等成片才发现就是整集重来。' +
+      '把 findings 逐条告诉客户、按 action 修完(改稿走 edit_rewritten_script)后复审,再拿 review_token 往下走。',
+    { episode_id: z.number().int().positive() },
+    async ({ episode_id }) => jsonResult(await client.producePost(`/episodes/${episode_id}/review/script`)),
+  )
+  server.tool(
+    'review_storyboards',
+    '【第②道硬闸·免费】审查分镜:禁区词(会被厂商审核拒、白扣费)、镜头时长分布、相邻构图重复、' +
+      '同场景角色站位漂移、情绪曲线峰谷、关键镜标记。★generate_frames 之前必须先跑本工具——' +
+      '分镜里的问题一旦整集出图就变成整集废图,单镜修不回来。按 findings.action 用 update_shot/split_shot 修完再复审。',
+    { episode_id: z.number().int().positive() },
+    async ({ episode_id }) => jsonResult(await client.producePost(`/episodes/${episode_id}/review/storyboards`)),
+  )
+  server.tool(
+    'review_frames',
+    '【第③道硬闸·免费】审查镜头图片层:角色身份锚覆盖(缺定妆图的角色在镜头里必漂)、出图失败率、' +
+      '孤儿角色变体、场景图被人物污染。★generate_videos 之前必须先跑本工具——出视频是全链最贵的一步,' +
+      '拿着漂移的首帧整集出视频是最典型的废片形态。按 findings.action 修完(多为 generate_character_portraits / ' +
+      'generate_shot_frame 单镜重生)再复审。',
+    { episode_id: z.number().int().positive() },
+    async ({ episode_id }) => jsonResult(await client.producePost(`/episodes/${episode_id}/review/frames`)),
+  )
+  server.tool(
+    'review_all',
+    '(推荐·免费)三层一次跑完的整体体检:剧本+分镜+镜头图片。开工前摸底、交付前复查用。' +
+      '★它**不发 review_token** —— 进收费步前仍需对应层的 review_script / review_storyboards / review_frames 各跑一次' +
+      '(闸认的是「针对当前产出物刚审过」,不是「审过一次」)。',
+    { episode_id: z.number().int().positive() },
+    async ({ episode_id }) => jsonResult(await client.producePost(`/episodes/${episode_id}/review/all`)),
+  )
   server.tool(
     'autofill_storyboards',
     '(推荐)AI 一键给全集分镜补全空缺字段,默认**只填空缺、不覆盖已有**(overwrite=true 才覆盖)。提升分镜完整性,出图前做。后台异步,文本步后付。',
@@ -480,17 +560,21 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       '★尾帧能批量出:frame_type=last_frame 会给「已有首帧且缺尾帧」的镜批量补尾帧(尾帧只在想固定某镜结尾画面/大运镜时才需,常规只出首帧)。' +
       '★响应里的 frames_planned 是**计划数,不是已成功数**——本接口在后台派发循环开跑之前就返回了。' +
       '真实进度只看 get_storyboards 的 first_frame_image / get_jobs 的逐条生成记录;' +
-      '余额不足(402)会中止整批,此时轮询再久也不会有结果,应去查余额而不是继续等。' + CONFIRM_HINT,
+      '余额不足(402)会中止整批,此时轮询再久也不会有结果,应去查余额而不是继续等。' +
+      REVIEW_GATE_HINT('review_storyboards', '分镜') + CONFIRM_HINT,
     {
       episode_id: z.number().int().positive(),
       quote_id: z.string().describe('来自 quote_frames'),
+      ...REVIEW_ARGS,
       frame_type: FRAME_TYPE_ARG.optional().describe('默认 first_frame,须与报价时一致'),
       image_model: z.string().optional().describe('临时覆盖本次出图模型(不传=用 drama 级设定,默认香蕉2)。可选:' +
         'gemini-3.1-flash-image(Nano Banana 2·默认·71点)/gemini-3-pro-image(Nano Banana Pro·更精细·175点)/' +
         'gemini-3.1-flash-lite-image(Nano Banana 2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream 5.0)/gpt-image-2(ChatGPT Image 2)'),
     },
-    async ({ episode_id, quote_id, frame_type, image_model }) =>
-      jsonResult(await client.producePost(`/episodes/${episode_id}/frames/generate`, { quote_id, frame_type, image_model })),
+    async ({ episode_id, quote_id, frame_type, image_model, review_token, acknowledge_review }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/frames/generate`, {
+        quote_id, frame_type, image_model, review_token, acknowledge_review,
+      })),
   )
 
   // ---------- 单镜出帧/重生(改某一镜的画面走这里,别去外部平台出图再传回来) ----------
@@ -542,10 +626,15 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   server.tool(
     'generate_videos',
     '确认后批量出视频:一条后台链跑完整集,余额不足会自动中止整链(防重复扣)。' +
-      '要求本集已出首帧(未出会被拒)。用 get_storyboards 轮询 video_url 逐镜填充即完成。' + CONFIRM_HINT,
-    { episode_id: z.number().int().positive(), quote_id: z.string().describe('来自 quote_videos') },
-    async ({ episode_id, quote_id }) =>
-      jsonResult(await client.producePost(`/episodes/${episode_id}/videos/generate`, { quote_id })),
+      '要求本集已出首帧(未出会被拒)。用 get_storyboards 轮询 video_url 逐镜填充即完成。' +
+      REVIEW_GATE_HINT('review_frames', '镜头图片') + CONFIRM_HINT,
+    {
+      episode_id: z.number().int().positive(),
+      quote_id: z.string().describe('来自 quote_videos'),
+      ...REVIEW_ARGS,
+    },
+    async ({ episode_id, quote_id, review_token, acknowledge_review }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/videos/generate`, { quote_id, review_token, acknowledge_review })),
   )
 
   // ---------- 成片(compose/终拼) ----------
@@ -846,10 +935,28 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       jsonResult(await client.produceGet(`/storyboards/${storyboard_id}/trim/recommend`)),
   )
   server.tool(
+    'scan_intra_shot_cuts',
+    '★客户报「镜头切太快 / 一个镜头里画面跳来跳去」时先跑这个。免费零扣费。'
+      + '一个分镜本应是**一个连续镜头**,但厂商可能在片内自行换机位硬切(望远镜特写→高空全景→人物中景),'
+      + '这类切点在分镜表和 timeline 里都看不到——只能扫画面。'
+      + '返回 shots_with_cuts(有镜内跳切的镜号)/total_cuts/engine_suspect/message。'
+      + '★判读:成片观感切点 = 镜与镜的接缝 + 这里报的镜内跳切;若本项占了大头,那不是剪辑节奏问题,'
+      + '重新拆镜或改转场都没用。engine_suspect=true 表示本剧引擎是已知高发源(WAN),'
+      + '实测 WAN 11/12 镜有镜内跳切、Seedance 1/6、H3 0/5,且提示词层拦不住(负向约束已在其中)——'
+      + '要根治只能 regenerate_shot_video 这些镜并换 seedance-2.5 或 hailuo-3。'
+      + '组模式镜与显式快剪蒙太奇镜天然多机位,已自动排除(detail 里标 skipped)。',
+    { episode_id: z.number().int().positive() },
+    async ({ episode_id }) =>
+      jsonResult(await client.produceGet(`/episodes/${episode_id}/intra-shot-cuts`)),
+  )
+  server.tool(
     'update_shot',
     '逐镜编辑:改单个分镜的文本内容(景别/动作/台词/画面描述/运镜等)与角色绑定(character_ids)。只传要改的字段、其余不动。' +
       '**免费**(纯文本写库)。★改 dialogue 会自动失效本镜已生成的 TTS 配音与字幕(需重出 tts);' +
-      '改文本不会自动重出图/视频,如需让画面跟上文本改动,改完再 regen 对应镜。用 get_storyboards 查改后结果。',
+      '改文本不会自动重出图/视频,如需让画面跟上文本改动,改完再 regen 对应镜。用 get_storyboards 查改后结果。' +
+      '★★原声镜(厂商原生音频)改 dialogue 后,本镜视频会被标记「待重生」——因为台词是**烤进视频人声**的,' +
+      '不重生就终拼,成片里念的仍是改动前的台词(典型现象:台词像是跑到了别的镜头上)。' +
+      'compose_episode 会以 advisory `stale_video_after_edit` 列出这些镜;正确处置是先 regenerate_shot_video 再终拼。',
     {
       storyboard_id: z.number().int().positive(),
       character_ids: z.array(z.number().int().positive()).optional()

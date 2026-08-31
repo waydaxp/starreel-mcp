@@ -385,6 +385,37 @@ constraint is already in the prompt and was measured ineffective). The only
 real fix is `regenerate_shot_video` on those shots after switching the drama to
 `seedance-2.5` or `hailuo-3`.
 
+### "画面里多出一个人 / 多出一件道具" — something appears that shouldn't be there
+
+Two completely different causes with opposite fixes. **Look at the shot's own
+first frame before doing anything** (`get_storyboards` → the frame image):
+
+1. **The frame itself already contains the extra thing.** Then the vendor did
+   nothing wrong — it faithfully animated what you gave it. This happens when a
+   frame was regenerated but something downstream still held the older image.
+   **Fix:** regenerate the frame until it's clean, then regenerate the video.
+   Rewriting the shot text does *not* help here — a line like "keeps holding the
+   same single sword" cannot argue a second sword out of the picture. (The
+   platform now always anchors video on the shot's *current* stored frame, so a
+   stale image can no longer sneak in from a caller's cached copy.)
+2. **The frame is clean and the extra thing grows in mid-clip.** That's drift
+   during generation, and **shot length is the biggest driver**: a long
+   single-shot gives the model room to invent. Measured case — a 16-second shot
+   whose neighbours were all 3–5 seconds: the room changed four times, the child
+   vanished for four seconds and then regrew from the edge of frame as a new
+   figure. **Fix:** split it (`split_shot`) into 3–5 second shots and regenerate;
+   on WAN also consider switching engine (see below).
+
+Keep single shots in the 3–5 second range unless you have a specific reason.
+If you find yourself authoring a 15s+ shot, that is the thing to fix first —
+no prompt wording compensates for handing the model that much freedom.
+
+One more propagation path: when shots are generated as a continuation chain, a
+shot can be anchored on the **previous shot's finished video**. A wrong shot
+therefore infects the next one, and r2v copies it faithfully. So fix the
+*earliest* bad shot in a run first, then regenerate the ones after it — don't
+start in the middle.
+
 ### Choosing an engine so this never comes up
 
 Pick the engine **before** generating video — switching does not retroactively

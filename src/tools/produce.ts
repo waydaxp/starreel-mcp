@@ -142,6 +142,11 @@ const WORKFLOW_HINT =
   '要覆盖默认用 update_project_settings 的 rewrite_pipeline(auto/two_pass/single_forced)与 fidelity_enforce(1=保真硬闸)。' +
   '客户说「AI 把我的剧本改偏了」时的处置:①确认完整原稿已进 set_script;②rewrite_pipeline 设 two_pass 强制保真后重跑 rewrite_script;' +
   '③客户确认角色外观后用 update_character 的 profile_locked=1 锁定档案,防后续提取覆盖外貌导致定妆图换脸。' +
+  '★客户想在**别的 AI 平台**改写剧本(常见诉求:第三方模型评估我方改写"改动太大",客户想自己掌控改动幅度):'+
+  '先调 get_script_format_spec 拿平台认可的格式契约(markdown 范本 + 可直接转发给外部模型的 external_prompt + 空白骨架),'+
+  '把 external_prompt+范本+客户原稿一起交给那个平台;拿回整理稿后**先调 check_script_format 自查**(免费·纯规则·不调模型),'+
+  'errors 清零再用 set_script 灌回原稿位,然后照常 rewrite_script——原稿已是剧本形态,保真路由会自动接管,台词逐句锁定、几乎零改动落库。'+
+  '★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。' +
   '用 get_pipeline_status 查进度(按项目类型返回专属步骤)。'
 
 const ETHNICITY_CODES = [
@@ -334,6 +339,39 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     },
     async ({ episode_id, script }) =>
       jsonResult(await client.producePut(`/episodes/${episode_id}/rewritten-script`, { script_content: script })),
+  )
+
+  // ---------- 外部平台改写的对接面(格式契约 + 回填前自查,都免费) ----------
+  server.tool(
+    'get_script_format_spec',
+    '取本平台**认可的剧本格式契约**:markdown 范本全文 + external_prompt(可整段转发给任意外部 AI 的任务提示词) + skeleton(空白骨架)。免费·静态·不扣费。' +
+      '★什么时候用:客户想自己掌控改写幅度、要拿到别的 AI 平台去改写、或反馈"你们的 AI 把我的剧本改动太大"时。' +
+      '★怎么用(三步):① 本工具取 external_prompt + markdown,连同客户原稿一起交给那个平台;' +
+      '② 拿回整理稿先用 check_script_format 自查,errors 清零;③ 用 set_script 把整理稿灌回**原稿位**,再照常 rewrite_script——' +
+      '原稿已是剧本形态时保真路由自动接管(台词逐句机器锁定、AI 不加戏),改动幅度由客户在外部那一步自己定。' +
+      '★契约内容含:场景头三段格式/地点命名律/环境首句三要素/角色首次出场外貌行/声音行前缀/单行台词长度/禁写运镜与片尾标记,' +
+      '以及"台词逐句保留·人物不许丢·动作节拍不许丢·不许加戏"四条保真要求(已写进 external_prompt)。',
+    {
+      drama_title: z.string().optional().describe('仅用于范本抬头,不影响格式契约本身'),
+      episode_number: z.number().int().positive().optional().describe('仅用于范本抬头'),
+    },
+    async ({ drama_title, episode_number }) => {
+      const q = new URLSearchParams()
+      if (drama_title) q.set('drama_title', drama_title)
+      if (episode_number) q.set('episode_number', String(episode_number))
+      const qs = q.toString()
+      return jsonResult(await client.produceGet(`/script-format/spec${qs ? '?' + qs : ''}`))
+    },
+  )
+  server.tool(
+    'check_script_format',
+    '**回填前的格式自查**:把一段剧本正文按平台判据跑一遍,逐条返回问题。免费·纯规则·不调模型·不落库·可反复跑。' +
+      '★errors = 系统会**无条件拒收**的(空/过短/无场景头/含运镜词/含片尾编辑标记),必须清零再灌;' +
+      'warnings = 默认只告警(strictOnly=true 的那几条在项目开启严格模式后会变成拒收):场过长过短/无声音行/单行台词超上限/场景头缺段/场号跳号。' +
+      '★典型用法:外部 AI 整理完 → 本工具自查 → 把返回的 message 清单原样发回那个平台让它"只修这些点、其余逐字照抄" → 再查一遍 → 全绿后 set_script。' +
+      '★它只查**格式**;台词是否逐句保留、人物有没有丢这类保真判据要等 rewrite_script 时由平台对着原稿判(本工具没有原稿侧输入)。',
+    { content: z.string().min(1).describe('要检查的剧本正文(一次一集,上限 3 万字)') },
+    async ({ content }) => jsonResult(await client.producePost('/script-format/lint', { content })),
   )
 
   // ---------- 提取(角色/场景/道具) ----------

@@ -282,6 +282,44 @@ with `update_character` `profile_locked: 1` so later extractions can't
 overwrite appearance (appearance anchors the portrait and face lock — an
 overwrite means face drift across the whole drama).
 
+## Rewriting on another AI platform — the format contract
+
+Some users want to control how much the script changes themselves, or come
+back saying a third-party model judged our rewrite "too far from the
+original." The answer is not to argue about rewrite quality — it is to hand
+them the format contract so **they** do the rewriting wherever they like, and
+our pipeline only has to accept it.
+
+Three steps, all free:
+
+1. `get_script_format_spec` → returns `markdown` (the full contract),
+   `external_prompt` (a ready-to-forward task prompt for any external model),
+   and `skeleton` (a blank scene skeleton). Give the user the prompt plus the
+   markdown to send to the other platform along with their original draft.
+   The prompt already carries the four fidelity requirements: keep every
+   line of dialogue verbatim, keep every character, keep every action beat,
+   invent nothing.
+2. `check_script_format` on what comes back → a per-issue list.
+   `errors` are what the platform rejects unconditionally (empty / too short /
+   no scene headers / camera-movement words / end-card markers) and must be
+   cleared. `warnings` are advisory by default; the ones flagged
+   `strictOnly` become rejections once the project turns on strict mode.
+   Send the `message` list straight back to the external model and ask it to
+   fix **only** those points, copying everything else verbatim. Re-check.
+3. `set_script` with the cleaned draft (it goes into the **source** slot),
+   then `rewrite_script` as usual. Because the source is now screenplay-shaped,
+   the fidelity route takes over automatically — dialogue is byte-locked and
+   the stored draft ends up nearly identical to what the user approved.
+
+Do **not** push an externally written draft into `edit_rewritten_script` — that
+endpoint rejects (400) an episode that has never been rewritten, by design.
+And do not skip step 2: a draft that fails the format gates is rejected at
+`save_script` anyway, wasting a full rewrite cycle.
+
+`check_script_format` checks **format only**. Whether the dialogue survived
+line-for-line is judged against the original at rewrite time — the checker has
+no source-side input.
+
 ## After the first rewrite — 点改优先 (point-edit, don't re-run)
 
 **`rewrite_script` is "start over from the source", not "give me another
@@ -473,7 +511,9 @@ to close") tells the vendor to fit that entire sequence into each 3-second shot.
 - **Discover / create**: `list_project_options`, `create_drama`,
   `update_project_settings`
 - **Script**: `set_script`, `rewrite_script`, `get_script`,
-  `edit_rewritten_script`, `extract_assets`
+  `edit_rewritten_script`, `extract_assets`,
+  `get_script_format_spec` + `check_script_format` (free — the format contract
+  to hand an external AI, and the pre-paste self-check)
 - **Identity & consistency**: `generate_character_portraits`, `upload_image`,
   `set_character_portrait`, `generate_character_sheet`, `extract_visual_lock`
 - **Shots → video**: `quote/generate_storyboards`, `get_storyboards`,

@@ -118,6 +118,10 @@ const WORKFLOW_HINT =
   '(实测 11/12 镜有镜内跳切,对照 seedance-2.5 仅 1/6、hailuo-3 为 0/5),成片观感是「一个镜头里画面跳来跳去、切太快」;' +
   '这是厂商指令遵循弱、提示词层拦不住(我方负向约束早已在其中且实测无效),事后只能换引擎重生。' +
   'WAN 适合镜头本就短平快的风格化/空镜/产品镜;要稳定单镜叙事请选 seedance-2.5 或 hailuo-3。生成后可用 scan_intra_shot_cuts 核查;' +
+  '④b★★对白密集剧慎选 hailuo-3(与上一条的「镜内自剪」是两回事,这条讲**说不说得全台词**):' +
+  '原生音频引擎会念到镜头结束就停、也会自说自话,实测「台词没念完整」占比 hailuo-3 **50%**(26 镜,均为 8-30 原生音频修复之后所生成,故是引擎本身)、' +
+  'seedance-2.5 **23%**(294 镜);wan3.0 该维度**样本不足未测**(26 个样本全在同一修复之前,修复后仅 2 镜)——不要据此认为 WAN 差。' +
+  '客户报「话没说完」时先跑 scan_dialogue_coverage 分族,别默认去加长镜头(实测镜长够的镜里仍有 32% 没念全);' +
   '⑤★镜长控制(所有引擎通用,WAN 上尤其明显):单镜保持 3~5 秒。镜头越长模型自由发挥空间越大——' +
   '实测一个 16 秒单镜(邻镜都是 3~5 秒)在片内换了 4 次场景、人物中途消失 4 秒后又从画面边缘长出来,' +
   '客户看到的就是「凭空多出一个人」。要长表演请拆成多个短镜再靠帧链衔接,别写 15 秒以上的单镜;' +
@@ -1018,9 +1022,35 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   )
   server.tool(
     'replace_shot_dialogue',
-    '换某镜对白音色/声线(转写+克隆重配)。后台异步,按用量后付不欠费。要求本镜有原声视频+角色声线定妆音。',
+    '换某镜对白音色/声线(转写+克隆重配)。后台异步,按用量后付不欠费。要求本镜有原声视频+角色声线定妆音。' +
+      '★它也是「这一镜台词没念完/念了别的」最经济的修法:用克隆音重配整句并静音原声段,' +
+      '**不重新生成视频**——按 TTS 档(千字符)计费,比 regenerate_shot_video(720p 212 点/秒)低几个数量级。' +
+      '代价:画面口型是按原音演的,换音后可能对不上;口型看不清的镜(背身/远景/画外)几乎无损,大特写慎用。' +
+      '整集批量用 repair_episode_dialogue。',
     { storyboard_id: z.number().int().positive() },
     async ({ storyboard_id }) => jsonResult(await client.producePost(`/storyboards/${storyboard_id}/dialogue-replace`)),
+  )
+  server.tool(
+    'repair_episode_dialogue',
+    '★整集批量修「台词没念完/念了别的」。默认只修 scan_dialogue_coverage 判为有缺陷的镜' +
+      '(truncated/off_script/extra_speech);minor_gap 那一族是转写误差、原声本来是好的,不动。' +
+      '原理与 replace_shot_dialogue 相同:克隆音重配整句 + 静音原声段,**不重新生成视频**——' +
+      '按 TTS 档(千字符)计费,比整集 regenerate_shot_video 低几个数量级,是这类缺陷的首选修法。' +
+      '★代价是口型:画面按原音演的,换音后可能对不上。口型看不清的镜(背身/远景/画外)几乎无损;' +
+      '若整集都是大特写对白,宁可选 regenerate_shot_video 重生。' +
+      '后台异步串行(CosyVoice 合成不并发),进度用 dialogue-repair-status 查;余额不足会中止且不扣费。' +
+      '修完记得 compose_episode 重拼成片,否则成片里还是旧音频。',
+    {
+      episode_id: z.number().int().positive(),
+      only_flagged: z.boolean().optional()
+        .describe('默认 true=只修被判有缺陷的镜。传 false 会把全集可替换镜都重配一遍——既花钱又可能把本来对的音频换坏,除非确有需要别关'),
+      force: z.boolean().optional().describe('对已有替换产物的镜也重跑(默认跳过,幂等)'),
+    },
+    async ({ episode_id, only_flagged, force }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/dialogue-repair`, {
+        ...(only_flagged === undefined ? {} : { only_flagged }),
+        ...(force ? { force: true } : {}),
+      })),
   )
   server.tool(
     'generate_bgm',

@@ -363,6 +363,17 @@ word-level comparison of what the clip's audio says against the shot's line.
 Note `never_audited` in the report — those shots have never been measured, which
 is not the same as passing; `rescan: true` measures them (costs ASR time).
 
+**Two ways to fix, and the cheap one is not the obvious one.**
+`repair_episode_dialogue` re-voices the line with the character's cloned voice
+and mutes the original audio — **without regenerating the video**. It bills at
+the TTS rate (per 1k characters) instead of the video rate (720p ≈ 212 pts/sec),
+which is orders of magnitude cheaper, and it fixes causes 2 and 3 below. Its one
+cost is lip sync: the picture was acted to the original audio. On shots where
+the mouth isn't readable (back turned, wide, off-screen) that is invisible; on
+sustained close-ups, regenerate instead. Reach for `regenerate_shot_video` when
+the shot is a close-up, or when the picture itself is also wrong.
+Either way, `compose_episode` afterwards — the final cut still holds the old audio until you do.
+
 Four distinct causes; they need **opposite** fixes, so identify the family first.
 
 1. **The line moved after the video was made.** If you edited `dialogue` on a
@@ -383,9 +394,13 @@ Four distinct causes; they need **opposite** fixes, so identify the family first
    of the audio does not match the script at all: invented lines, repeats of the
    previous shot, or just room tone). Lengthening does nothing here. **Fix:**
    `regenerate_shot_video`; if the same drama keeps producing this, switch
-   engine. Measured per-engine rate of shots whose line was not delivered in
-   full: `seedance-2.5` 23% · `wan3.0` 44% · `hailuo-3` 50% (30 shots, small
-   sample). For dialogue-heavy work prefer `seedance-2.5`.
+   engine. Measured rate of shots whose line was not delivered in full:
+   `seedance-2.5` **23%** (294 shots) · `hailuo-3` **50%** (26 shots, all
+   generated after the Aug-30 native-audio fix, so this is the engine itself).
+   `wan3.0` is **not measured**: its 26 sampled shots (46%) all predate that
+   same fix, and only 2 shots exist after it — treat WAN as unknown here, not
+   as bad. For dialogue-heavy work prefer `seedance-2.5`; be cautious with
+   `hailuo-3` when the script is dialogue-dense.
 4. **The transition ate the tail.** A cross-fade pulls the *next* shot's start
    backwards, covering the end of the current one. The platform now shortens or
    drops that transition automatically so it can never cover a spoken word, so

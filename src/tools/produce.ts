@@ -145,7 +145,8 @@ const WORKFLOW_HINT =
   '★客户想在**别的 AI 平台**改写剧本(常见诉求:第三方模型评估我方改写"改动太大",客户想自己掌控改动幅度):'+
   '先调 get_script_format_spec 拿平台认可的格式契约(markdown 范本 + 可直接转发给外部模型的 external_prompt + 空白骨架),'+
   '把 external_prompt+范本+客户原稿一起交给那个平台;拿回整理稿后**先调 check_script_format 自查**(免费·纯规则·不调模型),'+
-  'errors 清零再用 set_script 灌回原稿位,然后照常 rewrite_script——原稿已是剧本形态,保真路由会自动接管,台词逐句锁定、几乎零改动落库。'+
+  'errors 清零后有两条出口:【A】adopt_external_script 直接落为可拍稿(我方 AI 不介入·秒级·不计费,前提是外部稿含制作层标注);'+
+  '【B】set_script 灌回原稿位 + rewrite_script 走保真两步(外部只做剧情层时选这条,标注由平台补;客户自写的标注在这条路上会被剥掉重写)。'+
   '★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。' +
   '用 get_pipeline_status 查进度(按项目类型返回专属步骤)。'
 
@@ -344,11 +345,17 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   // ---------- 外部平台改写的对接面(格式契约 + 回填前自查,都免费) ----------
   server.tool(
     'get_script_format_spec',
-    '取本平台**认可的剧本格式契约**:markdown 范本全文 + external_prompt(可整段转发给任意外部 AI 的任务提示词) + skeleton(空白骨架)。免费·静态·不扣费。' +
+    '取本平台**认可的剧本格式契约**:markdown 范本全文 + external_prompt(可整段转发给任意外部 AI 的任务提示词) + skeleton(带 〈…〉 占位的模板) + filled_example(填好的成品对照)。免费·静态·不扣费。' +
+      '★范本 v2 起把**制作层标注**全写进去了([角色档案] 六段格式/[外貌] 行首标记/[道具]/[SFX][BGM][VFX]/motif/场景头第四段光线/文末元信息)——'+
+      'v1 只写剧情层,外部 AI 因此产不出完整稿、反复过不了自检。转发时**务必把 filled_example 一起给**:LLM 的格式正确率靠可模仿的完整样例,不靠规则条文。' +
       '★什么时候用:客户想自己掌控改写幅度、要拿到别的 AI 平台去改写、或反馈"你们的 AI 把我的剧本改动太大"时。' +
-      '★怎么用(三步):① 本工具取 external_prompt + markdown,连同客户原稿一起交给那个平台;' +
-      '② 拿回整理稿先用 check_script_format 自查,errors 清零;③ 用 set_script 把整理稿灌回**原稿位**,再照常 rewrite_script——' +
-      '原稿已是剧本形态时保真路由自动接管(台词逐句机器锁定、AI 不加戏),改动幅度由客户在外部那一步自己定。' +
+      '★两条出口(先问客户要哪条,这决定外部 AI 要不要写标注):' +
+      '【A 直接采用】外部 AI 产出**含制作层标注**的完整稿 → check_script_format 全绿 → adopt_external_script 直接落为可拍稿,'+
+      '我方 AI 完全不介入、秒级、不计费,客户写的 [角色档案] 原样生效。适合已经把外部 AI 调顺、要求零改动的客户。' +
+      '【B 送 AI 改写】外部 AI 只产出剧情层(**不要写任何标注**) → set_script 灌回原稿位 → rewrite_script 走保真两步补标注。'+
+      '★B 路径下客户自己写的标注**会被 G1 剥掉重写**,等于白写——所以选 B 就要明确告诉外部 AI 别写标注。' +
+      '★怎么用(三步):① 本工具取 external_prompt + filled_example + markdown,连同客户原稿一起交给那个平台;' +
+      '② 拿回整理稿先用 check_script_format 自查,errors 清零;③ 按出口 A 调 adopt_external_script,或按出口 B 调 set_script + rewrite_script。' +
       '★契约内容含:场景头三段格式/地点命名律/环境首句三要素/角色首次出场外貌行/声音行前缀/单行台词长度/禁写运镜与片尾标记,' +
       '以及"台词逐句保留·人物不许丢·动作节拍不许丢·不许加戏"四条保真要求(已写进 external_prompt)。',
     {
@@ -367,11 +374,33 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     'check_script_format',
     '**回填前的格式自查**:把一段剧本正文按平台判据跑一遍,逐条返回问题。免费·纯规则·不调模型·不落库·可反复跑。' +
       '★errors = 系统会**无条件拒收**的(空/过短/无场景头/含运镜词/含片尾编辑标记),必须清零再灌;' +
-      'warnings = 默认只告警(strictOnly=true 的那几条在项目开启严格模式后会变成拒收):场过长过短/无声音行/单行台词超上限/场景头缺段/场号跳号。' +
+      'warnings = 默认只告警(strictOnly=true 的那几条在项目开启严格模式后会变成拒收):场过长过短/无声音行/单行台词超上限/场景头缺段/场号跳号/'+
+      '[角色档案] 段数不对/写了档案却缺 [外貌] 行/说话人位混写年龄身份。' +
+      '★placeholder_left(残留 〈…〉 模板占位符)算 **error**:系统闸不查它,但占位符会原样落进正文被当画面内容,比被拒更糟。' +
+      '★场长按**剧情层**字数算([角色档案]/[外貌]/[道具]/[SFX] 等标注行不计入)——写全标注不会把场撑超 120 字,别为了过闸去删标注。' +
       '★典型用法:外部 AI 整理完 → 本工具自查 → 把返回的 message 清单原样发回那个平台让它"只修这些点、其余逐字照抄" → 再查一遍 → 全绿后 set_script。' +
       '★它只查**格式**;台词是否逐句保留、人物有没有丢这类保真判据要等 rewrite_script 时由平台对着原稿判(本工具没有原稿侧输入)。',
     { content: z.string().min(1).describe('要检查的剧本正文(一次一集,上限 3 万字)') },
     async ({ content }) => jsonResult(await client.producePost('/script-format/lint', { content })),
+  )
+
+  server.tool(
+    'adopt_external_script',
+    '【出口 A】把外部 AI 按范本产出的稿子**直接采用为可拍稿**,我方 AI 完全不介入。秒级、不计费。' +
+      '★前置硬闸:服务端会先跑一遍格式自检,errors 非空直接 400 并把清单原样返回——先用 check_script_format 改到全绿再调本工具。' +
+      'warnings 不拦(与默认宽松模式的 save_script 同尺度)。' +
+      '★什么时候用:客户要求「一个字都别改我的稿」、且外部 AI 已经产出含制作层标注的完整稿。' +
+      '★什么时候**不要**用:客户只整理了剧情层(没写 [角色档案]/[外貌])——那种稿子直接采用会让下游缺角色档案与外貌锚,' +
+      '走出口 B(set_script + rewrite_script)由平台补标注更稳。' +
+      '★与 edit_rewritten_script 的分工:那个是**改已有改写稿**的点改通道(没跑过改写会 400);本工具是**首次落稿**的通道,' +
+      '专为「稿子在外部做好了」这一种情形开的,不是绕过改写的后门——闸在服务端,过不了就是过不了。' +
+      '旧稿会存进 previous_script,采用错了用 get_script(include_previous=1) 回捞。',
+    {
+      episode_id: z.number().int().positive(),
+      content: z.string().min(1).describe('外部 AI 产出并已通过 check_script_format 的完整剧本正文'),
+    },
+    async ({ episode_id, content }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/script-format/adopt`, { content })),
   )
 
   // ---------- 提取(角色/场景/道具) ----------

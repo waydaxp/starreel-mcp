@@ -73,9 +73,9 @@ export const ENTRY_POINTS: EntryPoint[] = [
       'import_storyboard_table(不传 content 则读本集原始内容;本集已有分镜要 confirm_replace:true)',
     ],
     avoid: '绝不走 set_script→rewrite_script→generate_storyboards:改写会把秒数/景别/运镜/STYLE/字卡当非剧情内容剥掉(生产实测 8 镜 36 秒被拆成 20 镜 109 秒)。',
-    note: '导入后分镜有基础出图提示词(平台确定性拼装),想更专业再 `enhance_shot_prompts`;beat/潜台词等要理解的字段用 `autofill_storyboards`;`[字卡 9s] 行一 | 行二` 会建成卡镜(成片层直接渲,不出图不出视频)。',
-    free: true,
-    flow: 'get_storyboard_table_spec → 外部工具按范本整理 → check_storyboard_table(errors 清零) → import_storyboard_table',
+    note: '导入默认带 auto_complete(后台 AI 填专业字段 + 把每镜基础描述扩写成出图/视频提示词,文本步后付、调用前告知客户;auto_complete:false 只导入)——回执 started 后用 `get_autofill_status` 轮询到 done 再 `review_storyboards`;`[字卡 9s] 行一 | 行二` 会建成卡镜(成片层直接渲,不出图不出视频)。',
+    free: false,
+    flow: 'get_storyboard_table_spec → 外部工具按范本整理 → check_storyboard_table(errors 清零) → import_storyboard_table(默认 auto_complete) → get_autofill_status 到 done → review_storyboards',
   },
   {
     customer_has: '结构化数据(客户自己的工具 / 表格导出 / 第三方 AI 直接产 JSON,想一次建好角色+场景+分镜)',
@@ -85,8 +85,9 @@ export const ENTRY_POINTS: EntryPoint[] = [
       'bulk_import_storyboards(mode=merge 更新/保留,replace 替换全部需客户明确同意;prompt 字段由平台生成)',
     ],
     avoid: '别把 JSON 转成文本再走 import_storyboard_table,也别一条条 update_shot 手建——结构化数据就走结构化通道。',
-    note: '通过 MCP 导入时 image_prompt/video_prompt/frame_visual_contract 会被忽略,平台按景别+场景+光线+action 拼基础描述(回执 base_prompts_built)。',
-    free: true,
+    note: '通过 MCP 导入时 image_prompt/video_prompt/frame_visual_contract 会被忽略,平台拼基础描述;导入默认带 auto_complete(后台 AI 填专业字段,并只给平台拼基础描述的镜扩写出图/视频提示词,文本步后付、调用前告知客户)——回执 started 后 `get_autofill_status` 轮询到 done 再 `review_storyboards`。',
+    free: false,
+    flow: 'get_bulk_import_spec → check_bulk_import(errors 清零) → bulk_import_storyboards(默认 auto_complete) → get_autofill_status 到 done → review_storyboards',
   },
   {
     customer_has: '自有的定妆图 / 场景图 / 道具图 / 镜头图(客户真实素材)',
@@ -261,7 +262,7 @@ export const QA_TOOLS: QaTool[] = [
   { symptom: '动作发生在裁剪窗口之外', run: 'recommend_trim_window', then: ['trim_shot'] },
   { symptom: '画面多出一个人 / 多出一件道具', run: 'get_storyboards(先看该镜实际用的首帧)', then: ['generate_shot_frame(首帧本身就有→重生首帧再重生视频)', 'split_shot(帧干净、片中长出来→拆成 3~5 秒短镜)'] },
   { symptom: '出图 / 出视频前想知道哪些镜会被厂商拒', run: 'run_precheck', then: ['update_shot', 'generate_shot_frame'] },
-  { symptom: '整集健康度 / 缺镜 / 进度', run: 'get_pipeline_status', then: ['get_health_report', 'review_all', 'get_storyboards', 'get_jobs', 'get_run_status'] },
+  { symptom: '整集健康度 / 缺镜 / 进度', run: 'get_pipeline_status', then: ['get_health_report', 'review_all', 'get_storyboards', 'get_jobs', 'get_run_status', 'get_autofill_status(导入/一键填空的后台补全进度)'] },
   { symptom: '预算 / 余额', run: 'get_budget_status', then: ['get_cost_estimate'] },
 ]
 
@@ -286,7 +287,7 @@ export const BILLING = {
     'quote_id 一次性、约 15 分钟过期;绝不擅自确认,视频报价可能上万点。',
   pay_as_you_go: '文本步(改写 / 提取 / 自动填充 / 增强提示词)按 token 后付,无需报价但要事先告知。',
   free_families: [
-    '所有 get_* / list_* / scan_* / review_* / check_* / recommend_* / get_capabilities_guide',
+    '所有 get_* / list_* / scan_* / review_* / check_* / recommend_* / get_capabilities_guide / get_autofill_status',
     'compose_episode / rerender_episode / render_multi_aspect / generate_sfx / generate_effects / generate_transitions',
     'import_storyboard_table / adopt_external_script / get_script_format_spec / check_script_format',
     'get_storyboard_table_spec / check_storyboard_table / get_bulk_import_spec / check_bulk_import / bulk_import_storyboards',
@@ -299,7 +300,7 @@ export interface CommonRequest { customer_says: string; do: string }
 export const COMMON_REQUESTS: CommonRequest[] = [
   { customer_says: '你们能做什么 / 我该从哪开始', do: '先问客户手上有什么材料,对照 entry_points 选通道;建剧前 `list_project_options` 把项目类型/画幅/分辨率/引擎给客户挑。' },
   { customer_says: 'AI 把我的剧本改偏了 / 改动太大', do: '① 确认完整原稿已进 `set_script`;② `update_project_settings` 设 rewrite_pipeline=two_pass 后重跑 `rewrite_script`;③ 客户确认外观后 `update_character` profile_locked=1。客户想自己掌控 → 走格式范本三步(`get_script_format_spec` → 外部改 → `check_script_format`)。' },
-  { customer_says: '我有分镜表了,直接出片', do: '先 `get_storyboard_table_spec` 把契约给客户/外部工具,`check_storyboard_table` 自检全绿再 `import_storyboard_table`,不要走改写;导入后 `review_storyboards` 再出图。' },
+  { customer_says: '我有分镜表了,直接出片', do: '先 `get_storyboard_table_spec` 把契约给客户/外部工具,`check_storyboard_table` 自检全绿再 `import_storyboard_table`(默认 auto_complete,告知客户按文本计费),不要走改写;`get_autofill_status` 到 done 后 `review_storyboards` 再出图。' },
   { customer_says: '我的工具能导出表格 / 我想让别的 AI 直接生成结构化数据', do: '`get_bulk_import_spec`(契约 + 模板 + 成品示例给对方)→ `check_bulk_import`(errors 清零)→ `bulk_import_storyboards`;replace 模式先取得客户同意。' },
   { customer_says: '换了定妆图 / 换脸后镜头没变', do: '`set_character_portrait` 响应里的 stale_frames 逐镜 `generate_shot_frame`,再重生视频。' },
   { customer_says: '图片一直没出来', do: '`get_storyboards` 看 frame_status:pending=在生成(每张几十秒到数分钟、整集十几分钟),别重复调 `generate_frames`;failed 才是失败,读 fail_reason / fail_hint。' },

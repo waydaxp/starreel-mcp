@@ -152,6 +152,7 @@ const WORKFLOW_HINT =
   '跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。' +
   '★两条导入通道都是确定性的——写错了也会原样建进去,所以**先取契约再自检再导**:分镜表走 get_storyboard_table_spec → check_storyboard_table → import_storyboard_table;' +
   '客户自己的工具/表格能导出结构化数据、或让外部 AI 直接产 JSON 时走 get_bulk_import_spec → check_bulk_import → bulk_import_storyboards(角色+场景+分镜一次建好)。' +
+  '两条导入默认带 auto_complete(后台 AI 补专业字段 + 出图/视频提示词,文本步后付,调用前告知客户):回执 started=true 就用 get_autofill_status 轮询到 done 再 review_storyboards——补全会改镜,先审的 token 会失效。' +
   '用 get_pipeline_status 查进度(按项目类型返回专属步骤)。'
 
 const ETHNICITY_CODES = [
@@ -403,15 +404,20 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       '`[字卡 9s] 行一 | 行二` 会建成卡镜(成片层直接渲黑底卡,不出图不出视频)。' +
       '★不传 content 时读本集「原始内容」。没有任何逐镜声明会被 400 拒(那是剧本不是分镜表,请走正常拆镜)。' +
       '★本集已有分镜时返回 409 并告知镜数,确认要替换再带 confirm_replace:true(旧镜转已删除状态、可恢复)。' +
-      '秒数/景别缺失的镜照常导入但会在 issues 里列出——系统不替客户猜,猜错一个秒数就是成片时长错。',
+      '秒数/景别缺失的镜照常导入但会在 issues 里列出——系统不替客户猜,猜错一个秒数就是成片时长错。' +
+      '★导入后**默认自动补全**(auto_complete,跟随剧目「自动补齐辅助资产」开关、默认开):同一后台批次给全镜 AI 填空专业字段' +
+      '(镜头意图/节拍/潜台词/J-L cut/声线等,只填空)并把每镜由平台拼的基础描述扩写成完整出图/视频提示词——客户导完即可出图。' +
+      '文本步按 token 后付,**调用前告知客户**;只想导入不补传 auto_complete:false。回执 auto_complete.started=true 后' +
+      '用 get_autofill_status 轮询到 done(每镜数十秒)**再** review_storyboards——补全会改镜,先审查的 token 会失效。',
     {
       episode_id: z.number().int().positive(),
       content: z.string().optional().describe('分镜表全文;不传则用本集「原始内容」'),
       confirm_replace: z.boolean().optional().describe('本集已有分镜时必须显式传 true 才替换'),
+      auto_complete: z.boolean().optional().describe('导入后自动补全(专业字段 + 每镜出图/视频提示词;文本步后付)。不传=跟随剧目开关(默认开);false=只导入'),
     },
-    async ({ episode_id, content, confirm_replace }) =>
+    async ({ episode_id, content, confirm_replace, auto_complete }) =>
       jsonResult(await client.producePost(`/episodes/${episode_id}/storyboards/import`,
-        { ...(content ? { content } : {}), ...(confirm_replace ? { confirm_replace } : {}) })),
+        { ...(content ? { content } : {}), ...(confirm_replace ? { confirm_replace } : {}), ...(typeof auto_complete === 'boolean' ? { auto_complete } : {}) })),
   )
   // ---------- 分镜表直通道的格式契约 + 导入前自检（都免费、纯函数、不落库） ----------
   server.tool(
@@ -470,13 +476,26 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       '★三步走:① get_bulk_import_spec 取契约与成品示例;② check_bulk_import 自检到 errors 清零;③ 再调本工具。' +
       '★mode=merge(默认)保留未提到的镜;mode=replace 替换本集**全部**分镜(旧镜与已生成图/视频归档可恢复、不会自动重挂)——replace 必须先得到客户明确同意。' +
       '★image_prompt / video_prompt / frame_visual_contract 在门面被剥掉:prompt 工程由平台生成(缺省按景别+场景+光线+action 拼基础描述,回执 base_prompts_built 是拼了几镜);想更专业用 enhance_shot_prompts。' +
-      '★导入后:语速律会抬高装不下台词的镜(回执 speech_duration_raised / speech_duration_overflow);建议 review_storyboards 再出图。',
+      '★导入后:语速律会抬高装不下台词的镜(回执 speech_duration_raised / speech_duration_overflow)。' +
+      '★导入后**默认自动补全**(auto_complete,跟随剧目「自动补齐辅助资产」开关、默认开):同一后台批次给全镜 AI 填空专业字段(只填空),' +
+      '并只给**没填 image_prompt、由平台拼了基础描述**的镜扩写完整出图/视频提示词(客户自己写的绝不覆盖;回执 auto_complete.prompt_shots)。' +
+      '文本步按 token 后付,**调用前告知客户**;只想导入传 auto_complete:false。回执 started=true 后用 get_autofill_status 轮询到 done **再** review_storyboards。',
     {
       episode_id: z.number().int().positive(),
       payload: z.record(z.string(), z.unknown()).describe('通过 check_bulk_import 的载荷对象:{ mode, episode_meta?, characters?, scenes?, storyboards }'),
+      auto_complete: z.boolean().optional().describe('导入后自动补全(专业字段 + 平台拼基础描述的镜写出图/视频提示词;文本步后付)。不传=跟随剧目开关(默认开);false=只导入'),
     },
-    async ({ episode_id, payload }) =>
-      jsonResult(await client.producePost(`/episodes/${episode_id}/storyboards/bulk-import`, { payload })),
+    async ({ episode_id, payload, auto_complete }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/storyboards/bulk-import`,
+        { payload, ...(typeof auto_complete === 'boolean' ? { auto_complete } : {}) })),
+  )
+  server.tool(
+    'get_autofill_status',
+    '查本集后台补全批次(导入 auto_complete / autofill_storyboards 发起的 AI 一键填空)的进度:{ status: running|done|failed|idle, total, done, ok, fail }。免费。' +
+      '★导入带自动补全后必须等 status=done 再 review_storyboards / generate_frames——补全逐镜改写字段,先审查的 review_token 会因内容变化失效。' +
+      '每镜数十秒,整集可能十几分钟;轮询间隔 ≥10 秒,别紧轮。status=failed 或 fail>0 时看 fail 数,少量失败的镜可直接 autofill_storyboards 重跑(只填空,不重复扣已填的)。',
+    { episode_id: z.number().int().positive() },
+    async ({ episode_id }) => jsonResult(await client.produceGet(`/episodes/${episode_id}/autofill-status`)),
   )
   server.tool(
     'adopt_external_script',

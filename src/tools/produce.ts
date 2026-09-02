@@ -150,6 +150,8 @@ const WORKFLOW_HINT =
   '★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。' +
   '★★客户交来的**已经是成品分镜表**(逐镜写了秒数/景别/运镜)时,以上两条都不适用——直接用 import_storyboard_table 建分镜,'+
   '跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。' +
+  '★两条导入通道都是确定性的——写错了也会原样建进去,所以**先取契约再自检再导**:分镜表走 get_storyboard_table_spec → check_storyboard_table → import_storyboard_table;' +
+  '客户自己的工具/表格能导出结构化数据、或让外部 AI 直接产 JSON 时走 get_bulk_import_spec → check_bulk_import → bulk_import_storyboards(角色+场景+分镜一次建好)。' +
   '用 get_pipeline_status 查进度(按项目类型返回专属步骤)。'
 
 const ETHNICITY_CODES = [
@@ -389,6 +391,8 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   server.tool(
     'import_storyboard_table',
     '【已有分镜表时用这个】把客户**做完的分镜表**直接建成分镜，跳过改写与拆镜——中间没有任何 agent。免费。' +
+      '★三步走，别直接导：① get_storyboard_table_spec 取范本（景别/运镜白名单、正文落点、字卡语法、外部 AI 提示词）；' +
+      '② check_storyboard_table 自检到 errors 清零、逐条看 warnings（缺秒数/景别没认出/没画面叙述都会原样建进去）；③ 再调本工具。' +
       '★什么时候用:客户交来的不是剧本而是成品分镜表(逐镜写了秒数/景别/运镜,常见于给电视台/品牌方的样片)。' +
       '走 set_script→rewrite_script→generate_storyboards 那条路会把这些制作参数当非剧情内容剥掉' +
       '(生产实测:8 镜 36 秒的表跑完变成 20 镜 109 秒,STYLE 块与数据卡全丢),所以这类客户必须走本工具。' +
@@ -408,6 +412,71 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     async ({ episode_id, content, confirm_replace }) =>
       jsonResult(await client.producePost(`/episodes/${episode_id}/storyboards/import`,
         { ...(content ? { content } : {}), ...(confirm_replace ? { confirm_replace } : {}) })),
+  )
+  // ---------- 分镜表直通道的格式契约 + 导入前自检（都免费、纯函数、不落库） ----------
+  server.tool(
+    'get_storyboard_table_spec',
+    '取本平台**认可的分镜表格式契约**：markdown 范本全文 + external_prompt(可整段转发给任意外部 AI 的任务提示词) + skeleton(〈…〉占位骨架) + filled_example(成品对照) + checklist + shot_types(景别白名单) + movements(运镜白名单与认得的中文写法)。免费·静态·不扣费。' +
+      '★什么时候用:客户手上是成品分镜表(逐镜秒数/景别/运镜)、或想让外部 AI/自己的工具把镜头设计整理成我们认的格式时——**在 import_storyboard_table 之前**先调它。' +
+      '★契约要点:一镜一行 `[镜 001 | 4s | 特写 | 固定]`(加粗式/全角竖线/繁体也认);景别与运镜只认白名单里的词(写别的会留空);声明之后的正文=画面叙述(至少一行,否则出不了图)+ `角色名：台词` + [SFX:]/[BGM:]/[VFX:] 标注;' +
+      '整屏文字用 `[字卡 9s] 行一 | 行二`;STYLE/NEG 全片风格块**不写进表**(写进项目设定);`## 非场景标题` 会结束当前镜。' +
+      '转发给外部 AI 时**务必把 filled_example 一起给**:格式正确率靠可模仿的完整样例。',
+    {
+      drama_title: z.string().optional().describe('仅用于范本抬头,不影响契约本身'),
+      episode_number: z.number().int().positive().optional().describe('仅用于范本抬头'),
+    },
+    async ({ drama_title, episode_number }) => {
+      const q = new URLSearchParams()
+      if (drama_title) q.set('drama_title', drama_title)
+      if (episode_number) q.set('episode_number', String(episode_number))
+      const qs = q.toString()
+      return jsonResult(await client.produceGet(`/storyboard-table/spec${qs ? '?' + qs : ''}`))
+    },
+  )
+  server.tool(
+    'check_storyboard_table',
+    '**导入前的分镜表自检**:用导入端点**同一个解析器**跑一遍,返回 errors / warnings / stats / shots(逐镜解析预览:每一镜会变成什么秒数·景别·运镜·标记·正文字数)。免费·纯规则·不调模型·不落库·可反复跑。' +
+      '★errors = 导入会 400 的(空 / 没有任何逐镜声明=这不是分镜表)+ 残留 〈…〉 占位符;必须清零。' +
+      '★warnings = 导入照常但结果会缺东西的:缺秒数(按 4 秒建)/景别没认出(留空)/运镜没认出(留空)/声明后没画面叙述(出不了图的死镜)/没有场景头(绑不上场景)/数据卡没用字卡语法(不进成片)/单镜>15 秒/STYLE 块/镜号重复——把 message 清单原样发回外部 AI 让它只修这些点。' +
+      '★这里绿了,import_storyboard_table 就不会有 issues(同一份代码)。',
+    { content: z.string().min(1).describe('分镜表全文(一次一集,上限 6 万字)') },
+    async ({ content }) => jsonResult(await client.producePost('/storyboard-table/lint', { content })),
+  )
+
+  // ---------- 批量导入 JSON:结构化通道(客户自己的工具 / 表格导出 / 第三方 AI 直接产 JSON) ----------
+  server.tool(
+    'get_bulk_import_spec',
+    '取**批量导入 JSON 的格式契约**:markdown 范本全文 + template(占位符模板,<...> 必须替换) + filled_example(成品对照,可直接照结构填) + external_prompt(转发给外部 AI/自己工具的任务提示词) + checklist + enums(mode/role/char_type/shot_type/action_motion_class 的合法值,与校验器同源) + limits(数组与字段上限)。免费·静态·不扣费。' +
+      '★什么时候用:客户能从自己的工具/表格导出结构化数据、或要让外部 AI 直接产出 JSON 一次建好角色+场景+分镜时——**在 bulk_import_storyboards 之前**先调它。' +
+      '★与 import_storyboard_table(文本一镜一行)的分工:数据本来就是结构化的走 JSON;客户手上是文本分镜表走那条。' +
+      '★契约要点:顶层 { mode, episode_meta?, characters?[], scenes?[], storyboards[] };characters 按 name 去重、scenes 按 location+time 去重、storyboards 按 storyboard_number 去重;' +
+      'bound_characters 引用 characters[].name(或本剧已有角色名)、scene_ref 引用 scenes[] 的 location+time——引用不到会**静默跳过**;每镜 action/description 至少一个;dialogue 是 `说话人：台词`、别写舞台指示(会被念出来);' +
+      'image_prompt/video_prompt 可不填(平台拼基础描述),**通过 MCP 导入时这两个字段与 frame_visual_contract 会被忽略**(prompt 工程由平台生成)。',
+    {},
+    async () => jsonResult(await client.produceGet('/bulk-import/spec')),
+  )
+  server.tool(
+    'check_bulk_import',
+    '**导入前的 JSON 自检**:用导入端点**同一份 zod schema** 校验,再把导入路由的"静默行为"变成 warning。返回 errors / warnings / stats(镜数·总秒·角色·场景·mode·promptsToBuild)。免费·不落库·可反复跑。' +
+      '★errors = 导入会 400 或会出错覆盖的:不是合法 JSON / schema 不过(逐条带 path,如 storyboards[2].shot_type)/ 镜号重复 + 残留 <...> 占位符;必须清零。' +
+      '★warnings = 导入照常但会缺东西或有副作用的:bound_characters/scene_ref 引用不到(静默跳过)/ 没有 action+description(死镜)/ dialogue 含镜头语言(会被念出来)/ 单镜>15 秒 / 镜号跳号 / mode=replace(替换本集全部分镜)/ 全无角色绑定(人物会漂)。' +
+      '★这里绿了,bulk_import_storyboards 就能一次过。',
+    { payload: z.union([z.string(), z.record(z.string(), z.unknown())]).describe('要检查的 JSON:对象,或 JSON 字符串(客户贴的文本)') },
+    async ({ payload }) => jsonResult(await client.producePost('/bulk-import/lint', { payload })),
+  )
+  server.tool(
+    'bulk_import_storyboards',
+    '把一份结构化 JSON 一次性建成本集的角色 / 场景 / 分镜(按 name / location+time / storyboard_number 去重更新)。免费·确定性·不调 AI。' +
+      '★三步走:① get_bulk_import_spec 取契约与成品示例;② check_bulk_import 自检到 errors 清零;③ 再调本工具。' +
+      '★mode=merge(默认)保留未提到的镜;mode=replace 替换本集**全部**分镜(旧镜与已生成图/视频归档可恢复、不会自动重挂)——replace 必须先得到客户明确同意。' +
+      '★image_prompt / video_prompt / frame_visual_contract 在门面被剥掉:prompt 工程由平台生成(缺省按景别+场景+光线+action 拼基础描述,回执 base_prompts_built 是拼了几镜);想更专业用 enhance_shot_prompts。' +
+      '★导入后:语速律会抬高装不下台词的镜(回执 speech_duration_raised / speech_duration_overflow);建议 review_storyboards 再出图。',
+    {
+      episode_id: z.number().int().positive(),
+      payload: z.record(z.string(), z.unknown()).describe('通过 check_bulk_import 的载荷对象:{ mode, episode_meta?, characters?, scenes?, storyboards }'),
+    },
+    async ({ episode_id, payload }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/storyboards/bulk-import`, { payload })),
   )
   server.tool(
     'adopt_external_script',

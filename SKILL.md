@@ -69,7 +69,8 @@ announces a condensed version as MCP `instructions` at connect time.
 | A novel / outline / synopsis (not yet a screenplay) | `set_script` → `rewrite_script` (creative rewrite builds hooks and beats) → `review_script` | — |
 | A finished screenplay (scene headers + dialogue lines) | `set_script` → `rewrite_script` (auto two-pass fidelity: dialogue byte-locked) → `review_script`; force with `rewrite_pipeline: "two_pass"`, `fidelity_enforce: 1` | pasting it into `edit_rewritten_script` (400) |
 | Wants to rewrite on another AI / says our rewrite "changed too much" | `get_script_format_spec` → external rewrite → `check_script_format` → `adopt_external_script` (exit A) or `set_script` + `rewrite_script` (exit B) | skipping the check; `edit_rewritten_script` |
-| A finished **shot list** (per-shot seconds / shot size / camera move) | `import_storyboard_table` → `autofill_storyboards` → `review_storyboards` | `rewrite_script` + `generate_storyboards` — strips every production parameter (measured: 8 shots / 36 s became 20 shots / 109 s) |
+| A finished **shot list** (per-shot seconds / shot size / camera move) | `get_storyboard_table_spec` (the contract: shot-size / camera-move vocabulary, body layout, text-card syntax, a prompt for the external AI) → `check_storyboard_table` (same parser as the import; clear `errors`, read every `warning` — a missing duration, an unrecognised shot size or an empty body all get imported as-is) → `import_storyboard_table` → `review_storyboards` | `rewrite_script` + `generate_storyboards` — strips every production parameter (measured: 8 shots / 36 s became 20 shots / 109 s); importing without the check |
+| **Structured data** — their own tool / spreadsheet export, or an external AI producing JSON (cast + scenes + shots in one go) | `get_bulk_import_spec` (contract + template + worked example + enums, same source as the validator) → `check_bulk_import` (same zod schema; unresolved character / scene references, dead shots and stage directions inside dialogue are surfaced) → `bulk_import_storyboards` (`mode: "replace"` only with the customer's explicit OK) | converting the JSON to text for `import_storyboard_table`; hand-building shots with `update_shot`; sending `image_prompt` / `video_prompt` (ignored — the platform builds them) |
 | Their own portraits / scene / prop / shot images | `upload_image` · `set_character_portrait` · `upload_scene_image` · `upload_prop_sheet` · `upload_shot_frame` | rendering a "fix" elsewhere and uploading it — use `generate_shot_frame` |
 | A voice sample / a required voice | `clone_voice` → `speak_with_voice` → `set_character_voice` / `assign_voices` | cloning without the rights-holder's consent |
 | A song + lyrics | `create_drama` (`project_type: "mv"`) → `set_mv_lyrics` → `generate_mv_story` → `generate_mv_script` | `rewrite_script` (blocked for MV) |
@@ -563,8 +564,12 @@ to close") tells the vendor to fit that entire sequence into each 3-second shot.
   `edit_rewritten_script`, `extract_assets`,
   `get_script_format_spec` + `check_script_format` + `adopt_external_script`
   (free — the format contract to hand an external AI, the pre-paste self-check,
-  and the "adopt it verbatim" exit), `import_storyboard_table` (free — a
-  finished shot list becomes shots directly, skipping rewrite and breakdown)
+  and the "adopt it verbatim" exit), `get_storyboard_table_spec` +
+  `check_storyboard_table` + `import_storyboard_table` (free — a finished shot
+  list becomes shots directly, skipping rewrite and breakdown; contract first,
+  self-check second), `get_bulk_import_spec` + `check_bulk_import` +
+  `bulk_import_storyboards` (free — structured JSON builds cast, scenes and
+  shots in one call)
 - **Identity & consistency**: `generate_character_portraits`, `upload_image`,
   `set_character_portrait`, `generate_character_sheet`, `extract_visual_lock`
 - **Shots → video**: `quote/generate_storyboards`, `get_storyboards`,

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "StarReel Production API",
-    "version": "0.1.54",
-    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.54 tool surface (operationIds match MCP tool names 1:1)."
+    "version": "0.1.55",
+    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.55 tool surface (operationIds match MCP tool names 1:1)."
   },
   "servers": [
     {
@@ -27,6 +27,10 @@
     }
   },
   "tags": [
+    {
+      "name": "bulk-import",
+      "description": "Operations under /bulk-import"
+    },
     {
       "name": "characters",
       "description": "Operations under /characters"
@@ -60,6 +64,10 @@
       "description": "Operations under /script-format"
     },
     {
+      "name": "storyboard-table",
+      "description": "Operations under /storyboard-table"
+    },
+    {
       "name": "storyboards",
       "description": "Operations under /storyboards"
     },
@@ -77,6 +85,105 @@
     }
   ],
   "paths": {
+    "/bulk-import/lint": {
+      "post": {
+        "operationId": "check_bulk_import",
+        "summary": "**导入前的 JSON 自检**:用导入端点**同一份 zod schema** 校验,再把导入路由的\"静默行为\"变成 warning",
+        "description": "**导入前的 JSON 自检**:用导入端点**同一份 zod schema** 校验,再把导入路由的\"静默行为\"变成 warning。返回 errors / warnings / stats(镜数·总秒·角色·场景·mode·promptsToBuild)。免费·不落库·可反复跑。★errors = 导入会 400 或会出错覆盖的:不是合法 JSON / schema 不过(逐条带 path,如 storyboards[2].shot_type)/ 镜号重复 + 残留 <...> 占位符;必须清零。★warnings = 导入照常但会缺东西或有副作用的:bound_characters/scene_ref 引用不到(静默跳过)/ 没有 action+description(死镜)/ dialogue 含镜头语言(会被念出来)/ 单镜>15 秒 / 镜号跳号 / mode=replace(替换本集全部分镜)/ 全无角色绑定(人物会漂)。★这里绿了,bulk_import_storyboards 就能一次过。",
+        "tags": [
+          "bulk-import"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "payload": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": {}
+                      }
+                    ],
+                    "description": "要检查的 JSON:对象,或 JSON 字符串(客户贴的文本)"
+                  }
+                },
+                "required": [
+                  "payload"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "StarReel envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "description": "Operation result payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient prepaid balance (never overdrafts); response carries `needed` points"
+          }
+        }
+      }
+    },
+    "/bulk-import/spec": {
+      "get": {
+        "operationId": "get_bulk_import_spec",
+        "summary": "取**批量导入 JSON 的格式契约**:markdown 范本全文 + template(占位符模板,<",
+        "description": "取**批量导入 JSON 的格式契约**:markdown 范本全文 + template(占位符模板,<...> 必须替换) + filled_example(成品对照,可直接照结构填) + external_prompt(转发给外部 AI/自己工具的任务提示词) + checklist + enums(mode/role/char_type/shot_type/action_motion_class 的合法值,与校验器同源) + limits(数组与字段上限)。免费·静态·不扣费。★什么时候用:客户能从自己的工具/表格导出结构化数据、或要让外部 AI 直接产出 JSON 一次建好角色+场景+分镜时——**在 bulk_import_storyboards 之前**先调它。★与 import_storyboard_table(文本一镜一行)的分工:数据本来就是结构化的走 JSON;客户手上是文本分镜表走那条。★契约要点:顶层 { mode, episode_meta?, characters?[], scenes?[], storyboards[] };characters 按 name 去重、scenes 按 location+time 去重、storyboards 按 storyboard_number 去重;bound_characters 引用 characters[].name(或本剧已有角色名)、scene_ref 引用 scenes[] 的 location+time——引用不到会**静默跳过**;每镜 action/description 至少一个;dialogue 是 `说话人：台词`、别写舞台指示(会被念出来);image_prompt/video_prompt 可不填(平台拼基础描述),**通过 MCP 导入时这两个字段与 frame_visual_contract 会被忽略**(prompt 工程由平台生成)。",
+        "tags": [
+          "bulk-import"
+        ],
+        "responses": {
+          "200": {
+            "description": "StarReel envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "description": "Operation result payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient prepaid balance (never overdrafts); response carries `needed` points"
+          }
+        }
+      }
+    },
     "/characters/{character_id}": {
       "put": {
         "operationId": "update_character",
@@ -2877,7 +2984,7 @@
       "post": {
         "operationId": "extract_assets",
         "summary": "从可拍稿提取角色/场景/道具(一次写三表,是下游一致性的地基)",
-        "description": "从可拍稿提取角色/场景/道具(一次写三表,是下游一致性的地基)。后台异步,文本步后付不欠费。前置:已 rewrite_script 产出改写稿(新项目强制;人物档案从改写稿提取才与剧本、分镜自洽)。★分钟级后台任务;用 get_run_status 判断是否还在跑,别拿 60 秒当失败判据。\n★【改写稿审查硬闸·免费】本步前必须先调 review_script:把返回的 findings 逐条原样告诉客户(每条带 code=问题类型、shots=命中镜号、action=该调哪个工具修),再把 review_token 传进本工具。未审查会被 400 拒。审查后又改了内容 → token 自动失效,复审一次即可(仍免费)。有 error 时默认拦截;客户知情并坚持照现状继续,才带 acknowledge_review:true——带病推进大概率产出废片且照常扣费,不要替客户做这个决定。★三档执行策略(别把三档混着问客户):①【基础项目设定·免费·必做地基·建剧即设好,别建空壳】project_type/setting_brief(世界观·ERA LOCK)/ethnicity(族裔)/画幅分辨率,以及一致性锚 cinematography_prompt(摄影DNA)·art_bible(美术圣经)·visual_lock(视觉锁定)——全免费,是驱动全链一致性的地基;不设好,后续所有生成都跑偏、返工重花钱。用 create_drama/update_project_settings 直接设。★visual_lock/art_bible 只写画面级/世界级锁(镜头语言·环境·美术基调·禁入元素),**绝不为具体角色钉服装/发型/外观细节**——角色外观的唯一真相源是 extract_assets 产出的人物档案(要改走 update_character);两处都写必然互相矛盾,定妆图跟档案、设定图跟视觉锁,一致性闸按定妆图拒收 → 设定图/镜头帧**结构性连拒**,重掷多少次都过不了、纯白花钱。★★【逐环节审查协议·全部免费·这是防废片的主线,不是可选项】每个环节产出后先审查、把结论原样告诉客户,再进下一步。**三道硬闸(不过会被 400 拒)**:①改写稿产出后 → review_script(在 extract_assets / generate_storyboards 之前);②分镜产出后 → review_storyboards(在 generate_frames 之前);③镜头图片产出后 → review_frames(在 generate_videos 之前)。每次审查返回 review_token,把它随下游收费工具一起传;findings 逐条讲给客户(code=问题类型·shots=命中镜号·action=该调哪个工具修),按 action 修完后**复审**再走。审查后又改了内容 → token 自动失效,复审一次即可(免费)。有 error 时默认拦截,只有客户明确知情并坚持才带 acknowledge_review:true——别替客户做这个决定。**软引导(不阻断但强烈建议,同样免费)**:出图/出视频前跑 run_precheck(揪出必被厂商拒的镜,防白花钱);分镜后跑 get_health_report;定妆图出完用 get_characters 核对每个出场角色都有 image/sheet;出帧后用 get_storyboards 看 frame_status 与 fail_reason/fail_hint(failed 的镜先修再往下,别带着废帧出视频);出视频后同样看 video_status;成片前用 get_pipeline_status 确认没有缺镜。★**禁止一路 generate 到底**:不审查就连推的做法,问题会在每一层被放大,最后整集废掉重来——而重来的每一次出图/出视频都是真扣费。审查全部免费,拦下来一分钱不花。②【产线主干·按序不跳步·★先分镜再建资产】set_script→rewrite_script→★review_script→extract_assets→storyboards(先分镜·纯文本拆镜)→★review_storyboards→★剧本纪律(端点强制,绕不过):原始素材(梗概/大纲/成品稿都算)一律放 set_script,**必须经 rewrite_script 产出 AI 改写稿**——把自己写好的剧本直接贴进 edit_rewritten_script 绕过改写会被 400 拒(没有改写稿就没有可改的对象),extract_assets 同样要求基于改写稿。改写后的所有修改按 AI 产物的结构化格式做:改稿 edit_rewritten_script(润色/纠正)、人物档案 update_character、分镜 update_shot/replace_shot_dialogue——别回头整篇替换剧本或在设定字段里另写一套,两套真相源打架是一致性事故的头号根源。★★**改写成功一次后就别再重跑 rewrite_script**:它是从原稿整篇重来,当前稿的所有修正全丢,且新版不保证保留旧版已改好的地方(三版实测会来回摆)。要修就 edit_rewritten_script 点改(get_script 取全文 → 只改那几场、其余逐字照抄 → 提交整篇),免费秒级、结果确定;误重跑用 get_script(include_previous=1) 回捞上一版。generate_portraits_and_sheets(定妆图+设定图·分镜后建只给出场角色出图更省)→assign_voices(分配音色)→frames→★review_frames→videos→generate_tts→compose;★别先建角色形象/道具设定图/动作模板再分镜——分镜是纯文本步、不依赖任何图;资产在分镜后建更省更准(动作模板本就必须分镜后)。收费步照现有 quote 报价确认流程。广告另需 add_product+generate_product_sheet;MV 走 set_mv_lyrics→generate_mv_story→generate_mv_script。★世界观概念图=默认必做(提升整剧一致性、很多第三方平台漏做这步):分镜后默认调 generate_world_concept,仍走报价确认流程(告知客户预估点数、确认再扣)——不静默扣费、也别跳过。★分镜后的剧目级资产别漏——尤其 generate_motion_templates(动作模板:从分镜抽取统一全片运动语言,漏了动作会散乱)与 generate_color_script(色彩脚本:统一色调);分镜后、出图前一并做,仍走报价确认。★场景 Bible(每场景详细设定)顺序在**场景图片出图之后**——据出好的场景图完善(MCP 暂无此工具、在官网做);别在出场景图前做场景 Bible。★音频默认用视频原声(use_clip_audio 默认开、跳过 TTS 直接用 AI 视频自带声):建剧/改设定时 AI 应主动告知客户「默认用视频原声,如需 TTS 配音把 use_clip_audio 设 false」,让客户选。★图片模型默认香蕉2(Nano Banana 2 = gemini-3.1-flash-image·整剧统一画风):create_drama/update_project_settings 的 image_model 设,不传即默认香蕉2;可选 gemini-3-pro-image(香蕉Pro·更精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream5.0)/gpt-image-2(ChatGPT Image2);generate_frames 可临时覆盖某次。★视频引擎四选一(drama级·AI 建剧时必须主动按剧选型引导并给价差让客户定):【选型决策树】①写实真人剧→seedance-2.5(默认·指令遵循/人脸细节最强·720p 212点/秒),预算敏感可 hailuo-3(约1/3成本70点/秒·强保真编辑·但单镜约6分钟);②风格化/动画/3D卡通剧·空镜·产品镜→wan3.0(约4折84点/秒·最长30秒·最短2秒计费·单镜约2分钟),赶交付用 wan3.0-prime(126点/秒·约1分钟);③★写实真人剧绝不选 wan3.0/prime——WAN 输出侧真人脸审核在 720p+ 一致拒、重试救不回;④★★叙事剧(有对白、讲连贯故事、镜头节奏要稳的)慎选 wan3.0/prime:WAN 会在**单个分镜片内自行换机位硬切**(实测 11/12 镜有镜内跳切,对照 seedance-2.5 仅 1/6、hailuo-3 为 0/5),成片观感是「一个镜头里画面跳来跳去、切太快」;这是厂商指令遵循弱、提示词层拦不住(我方负向约束早已在其中且实测无效),事后只能换引擎重生。WAN 适合镜头本就短平快的风格化/空镜/产品镜;要稳定单镜叙事请选 seedance-2.5 或 hailuo-3。生成后可用 scan_intra_shot_cuts 核查;④b★★对白密集剧慎选 hailuo-3(与上一条的「镜内自剪」是两回事,这条讲**说不说得全台词**):原生音频引擎会念到镜头结束就停、也会自说自话,实测「台词没念完整」占比 hailuo-3 **50%**(26 镜,均为 8-30 原生音频修复之后所生成,故是引擎本身)、seedance-2.5 **23%**(294 镜);wan3.0 该维度**样本不足未测**(26 个样本全在同一修复之前,修复后仅 2 镜)——不要据此认为 WAN 差。客户报「话没说完」时先跑 scan_dialogue_coverage 分族,别默认去加长镜头(实测镜长够的镜里仍有 32% 没念全);⑤★镜长控制(所有引擎通用,WAN 上尤其明显):单镜保持 3~5 秒。镜头越长模型自由发挥空间越大——实测一个 16 秒单镜(邻镜都是 3~5 秒)在片内换了 4 次场景、人物中途消失 4 秒后又从画面边缘长出来,客户看到的就是「凭空多出一个人」。要长表演请拆成多个短镜再靠帧链衔接,别写 15 秒以上的单镜;【分辨率决策】草稿/迭代期:WAN 剧 480p(42点/秒最省)、其余 720p;成片交付:seedance 剧 720p(高清档停售)、hailuo-3 剧 1080p(=2K·112点/秒)、WAN 剧 1080p(168点/秒);hailuo-3 无独立 480p 档(选了也按 768P 计费);create_drama/update_project_settings 的 video_engine/video_resolution 设,★都必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。★改某一镜画面 / 换定妆图后要让新图生效,走**单镜重生 generate_shot_frame**(平台自动带该镜身份锚·场景道具参考·画风锚,保全片一致);generate_frames 只批量补「缺帧」的镜、已有首帧的镜跳过(正常、不是\"拒绝\"),尾帧用 frame_type=last_frame 可批量补。换定妆图(set_character_portrait)后响应里的 stale_frames 就是被旧图污染、需逐镜重生的镜。★绝不用外部工具自制首尾帧再 upload_shot_frame 来\"改画面\"——外部图无身份锚/画风锚,人物·服装·画风必漂,那才是废片根源;upload_shot_frame 只用于客户自有真实素材。③【可选增强·AI 主动提示客户·报价确认才做】美术圣经生成/视觉锁抽取/色彩脚本/动作模板/场景图/场景组/口型/海报/音效/配乐/字幕翻译——这些提升一致性/质量、大多收费。★AI 应主动告知客户这些可做并给报价,客户确认才跑;既不默默跳过、也不擅自扣费。★两条锁定纪律:①**画幅比例**在 create_drama 即定、drama 级锁定,之后所有出图/出视频/成片都用它、**别中途改**(改了已生成内容画幅会不一致、漂移);不设默认 9:16。②**拆镜每镜 5-7 秒是对 AI 出视频优化的正常时长**,别因「镜偏长」误判就重拆——generate_storyboards 会**替换整集所有分镜**、已出图白费,已有分镜后端会拦、需 confirm_replace。★改写保真(默认 auto 智能路由):set_script 的原稿**本身已是剧本形态**(场景头/对白行结构)时,rewrite_script 自动走两步保真——客户台词逐句由机器闸锁定(丢一句即内部拒收重做)、AI 绝不加戏;剧作缺口(钩子/情感锚点)不自动补,写进 get_script 返回的 dramaturgy_suggestions 由客户决定采纳。原稿是小说/大纲则自动走创作型改写(AI 铺钩子造情感点),两种客户各得其所、无需手动切换。要覆盖默认用 update_project_settings 的 rewrite_pipeline(auto/two_pass/single_forced)与 fidelity_enforce(1=保真硬闸)。客户说「AI 把我的剧本改偏了」时的处置:①确认完整原稿已进 set_script;②rewrite_pipeline 设 two_pass 强制保真后重跑 rewrite_script;③客户确认角色外观后用 update_character 的 profile_locked=1 锁定档案,防后续提取覆盖外貌导致定妆图换脸。★客户想在**别的 AI 平台**改写剧本(常见诉求:第三方模型评估我方改写\"改动太大\",客户想自己掌控改动幅度):先调 get_script_format_spec 拿平台认可的格式契约(markdown 范本 + 可直接转发给外部模型的 external_prompt + 空白骨架),把 external_prompt+范本+客户原稿一起交给那个平台;拿回整理稿后**先调 check_script_format 自查**(免费·纯规则·不调模型),errors 清零后有两条出口:【A】adopt_external_script 直接落为可拍稿(我方 AI 不介入·秒级·不计费,前提是外部稿含制作层标注);【B】set_script 灌回原稿位 + rewrite_script 走保真两步(外部只做剧情层时选这条,标注由平台补;客户自写的标注在这条路上会被剥掉重写)。★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。★★客户交来的**已经是成品分镜表**(逐镜写了秒数/景别/运镜)时,以上两条都不适用——直接用 import_storyboard_table 建分镜,跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。用 get_pipeline_status 查进度(按项目类型返回专属步骤)。",
+        "description": "从可拍稿提取角色/场景/道具(一次写三表,是下游一致性的地基)。后台异步,文本步后付不欠费。前置:已 rewrite_script 产出改写稿(新项目强制;人物档案从改写稿提取才与剧本、分镜自洽)。★分钟级后台任务;用 get_run_status 判断是否还在跑,别拿 60 秒当失败判据。\n★【改写稿审查硬闸·免费】本步前必须先调 review_script:把返回的 findings 逐条原样告诉客户(每条带 code=问题类型、shots=命中镜号、action=该调哪个工具修),再把 review_token 传进本工具。未审查会被 400 拒。审查后又改了内容 → token 自动失效,复审一次即可(仍免费)。有 error 时默认拦截;客户知情并坚持照现状继续,才带 acknowledge_review:true——带病推进大概率产出废片且照常扣费,不要替客户做这个决定。★三档执行策略(别把三档混着问客户):①【基础项目设定·免费·必做地基·建剧即设好,别建空壳】project_type/setting_brief(世界观·ERA LOCK)/ethnicity(族裔)/画幅分辨率,以及一致性锚 cinematography_prompt(摄影DNA)·art_bible(美术圣经)·visual_lock(视觉锁定)——全免费,是驱动全链一致性的地基;不设好,后续所有生成都跑偏、返工重花钱。用 create_drama/update_project_settings 直接设。★visual_lock/art_bible 只写画面级/世界级锁(镜头语言·环境·美术基调·禁入元素),**绝不为具体角色钉服装/发型/外观细节**——角色外观的唯一真相源是 extract_assets 产出的人物档案(要改走 update_character);两处都写必然互相矛盾,定妆图跟档案、设定图跟视觉锁,一致性闸按定妆图拒收 → 设定图/镜头帧**结构性连拒**,重掷多少次都过不了、纯白花钱。★★【逐环节审查协议·全部免费·这是防废片的主线,不是可选项】每个环节产出后先审查、把结论原样告诉客户,再进下一步。**三道硬闸(不过会被 400 拒)**:①改写稿产出后 → review_script(在 extract_assets / generate_storyboards 之前);②分镜产出后 → review_storyboards(在 generate_frames 之前);③镜头图片产出后 → review_frames(在 generate_videos 之前)。每次审查返回 review_token,把它随下游收费工具一起传;findings 逐条讲给客户(code=问题类型·shots=命中镜号·action=该调哪个工具修),按 action 修完后**复审**再走。审查后又改了内容 → token 自动失效,复审一次即可(免费)。有 error 时默认拦截,只有客户明确知情并坚持才带 acknowledge_review:true——别替客户做这个决定。**软引导(不阻断但强烈建议,同样免费)**:出图/出视频前跑 run_precheck(揪出必被厂商拒的镜,防白花钱);分镜后跑 get_health_report;定妆图出完用 get_characters 核对每个出场角色都有 image/sheet;出帧后用 get_storyboards 看 frame_status 与 fail_reason/fail_hint(failed 的镜先修再往下,别带着废帧出视频);出视频后同样看 video_status;成片前用 get_pipeline_status 确认没有缺镜。★**禁止一路 generate 到底**:不审查就连推的做法,问题会在每一层被放大,最后整集废掉重来——而重来的每一次出图/出视频都是真扣费。审查全部免费,拦下来一分钱不花。②【产线主干·按序不跳步·★先分镜再建资产】set_script→rewrite_script→★review_script→extract_assets→storyboards(先分镜·纯文本拆镜)→★review_storyboards→★剧本纪律(端点强制,绕不过):原始素材(梗概/大纲/成品稿都算)一律放 set_script,**必须经 rewrite_script 产出 AI 改写稿**——把自己写好的剧本直接贴进 edit_rewritten_script 绕过改写会被 400 拒(没有改写稿就没有可改的对象),extract_assets 同样要求基于改写稿。改写后的所有修改按 AI 产物的结构化格式做:改稿 edit_rewritten_script(润色/纠正)、人物档案 update_character、分镜 update_shot/replace_shot_dialogue——别回头整篇替换剧本或在设定字段里另写一套,两套真相源打架是一致性事故的头号根源。★★**改写成功一次后就别再重跑 rewrite_script**:它是从原稿整篇重来,当前稿的所有修正全丢,且新版不保证保留旧版已改好的地方(三版实测会来回摆)。要修就 edit_rewritten_script 点改(get_script 取全文 → 只改那几场、其余逐字照抄 → 提交整篇),免费秒级、结果确定;误重跑用 get_script(include_previous=1) 回捞上一版。generate_portraits_and_sheets(定妆图+设定图·分镜后建只给出场角色出图更省)→assign_voices(分配音色)→frames→★review_frames→videos→generate_tts→compose;★别先建角色形象/道具设定图/动作模板再分镜——分镜是纯文本步、不依赖任何图;资产在分镜后建更省更准(动作模板本就必须分镜后)。收费步照现有 quote 报价确认流程。广告另需 add_product+generate_product_sheet;MV 走 set_mv_lyrics→generate_mv_story→generate_mv_script。★世界观概念图=默认必做(提升整剧一致性、很多第三方平台漏做这步):分镜后默认调 generate_world_concept,仍走报价确认流程(告知客户预估点数、确认再扣)——不静默扣费、也别跳过。★分镜后的剧目级资产别漏——尤其 generate_motion_templates(动作模板:从分镜抽取统一全片运动语言,漏了动作会散乱)与 generate_color_script(色彩脚本:统一色调);分镜后、出图前一并做,仍走报价确认。★场景 Bible(每场景详细设定)顺序在**场景图片出图之后**——据出好的场景图完善(MCP 暂无此工具、在官网做);别在出场景图前做场景 Bible。★音频默认用视频原声(use_clip_audio 默认开、跳过 TTS 直接用 AI 视频自带声):建剧/改设定时 AI 应主动告知客户「默认用视频原声,如需 TTS 配音把 use_clip_audio 设 false」,让客户选。★图片模型默认香蕉2(Nano Banana 2 = gemini-3.1-flash-image·整剧统一画风):create_drama/update_project_settings 的 image_model 设,不传即默认香蕉2;可选 gemini-3-pro-image(香蕉Pro·更精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream5.0)/gpt-image-2(ChatGPT Image2);generate_frames 可临时覆盖某次。★视频引擎四选一(drama级·AI 建剧时必须主动按剧选型引导并给价差让客户定):【选型决策树】①写实真人剧→seedance-2.5(默认·指令遵循/人脸细节最强·720p 212点/秒),预算敏感可 hailuo-3(约1/3成本70点/秒·强保真编辑·但单镜约6分钟);②风格化/动画/3D卡通剧·空镜·产品镜→wan3.0(约4折84点/秒·最长30秒·最短2秒计费·单镜约2分钟),赶交付用 wan3.0-prime(126点/秒·约1分钟);③★写实真人剧绝不选 wan3.0/prime——WAN 输出侧真人脸审核在 720p+ 一致拒、重试救不回;④★★叙事剧(有对白、讲连贯故事、镜头节奏要稳的)慎选 wan3.0/prime:WAN 会在**单个分镜片内自行换机位硬切**(实测 11/12 镜有镜内跳切,对照 seedance-2.5 仅 1/6、hailuo-3 为 0/5),成片观感是「一个镜头里画面跳来跳去、切太快」;这是厂商指令遵循弱、提示词层拦不住(我方负向约束早已在其中且实测无效),事后只能换引擎重生。WAN 适合镜头本就短平快的风格化/空镜/产品镜;要稳定单镜叙事请选 seedance-2.5 或 hailuo-3。生成后可用 scan_intra_shot_cuts 核查;④b★★对白密集剧慎选 hailuo-3(与上一条的「镜内自剪」是两回事,这条讲**说不说得全台词**):原生音频引擎会念到镜头结束就停、也会自说自话,实测「台词没念完整」占比 hailuo-3 **50%**(26 镜,均为 8-30 原生音频修复之后所生成,故是引擎本身)、seedance-2.5 **23%**(294 镜);wan3.0 该维度**样本不足未测**(26 个样本全在同一修复之前,修复后仅 2 镜)——不要据此认为 WAN 差。客户报「话没说完」时先跑 scan_dialogue_coverage 分族,别默认去加长镜头(实测镜长够的镜里仍有 32% 没念全);⑤★镜长控制(所有引擎通用,WAN 上尤其明显):单镜保持 3~5 秒。镜头越长模型自由发挥空间越大——实测一个 16 秒单镜(邻镜都是 3~5 秒)在片内换了 4 次场景、人物中途消失 4 秒后又从画面边缘长出来,客户看到的就是「凭空多出一个人」。要长表演请拆成多个短镜再靠帧链衔接,别写 15 秒以上的单镜;【分辨率决策】草稿/迭代期:WAN 剧 480p(42点/秒最省)、其余 720p;成片交付:seedance 剧 720p(高清档停售)、hailuo-3 剧 1080p(=2K·112点/秒)、WAN 剧 1080p(168点/秒);hailuo-3 无独立 480p 档(选了也按 768P 计费);create_drama/update_project_settings 的 video_engine/video_resolution 设,★都必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。★改某一镜画面 / 换定妆图后要让新图生效,走**单镜重生 generate_shot_frame**(平台自动带该镜身份锚·场景道具参考·画风锚,保全片一致);generate_frames 只批量补「缺帧」的镜、已有首帧的镜跳过(正常、不是\"拒绝\"),尾帧用 frame_type=last_frame 可批量补。换定妆图(set_character_portrait)后响应里的 stale_frames 就是被旧图污染、需逐镜重生的镜。★绝不用外部工具自制首尾帧再 upload_shot_frame 来\"改画面\"——外部图无身份锚/画风锚,人物·服装·画风必漂,那才是废片根源;upload_shot_frame 只用于客户自有真实素材。③【可选增强·AI 主动提示客户·报价确认才做】美术圣经生成/视觉锁抽取/色彩脚本/动作模板/场景图/场景组/口型/海报/音效/配乐/字幕翻译——这些提升一致性/质量、大多收费。★AI 应主动告知客户这些可做并给报价,客户确认才跑;既不默默跳过、也不擅自扣费。★两条锁定纪律:①**画幅比例**在 create_drama 即定、drama 级锁定,之后所有出图/出视频/成片都用它、**别中途改**(改了已生成内容画幅会不一致、漂移);不设默认 9:16。②**拆镜每镜 5-7 秒是对 AI 出视频优化的正常时长**,别因「镜偏长」误判就重拆——generate_storyboards 会**替换整集所有分镜**、已出图白费,已有分镜后端会拦、需 confirm_replace。★改写保真(默认 auto 智能路由):set_script 的原稿**本身已是剧本形态**(场景头/对白行结构)时,rewrite_script 自动走两步保真——客户台词逐句由机器闸锁定(丢一句即内部拒收重做)、AI 绝不加戏;剧作缺口(钩子/情感锚点)不自动补,写进 get_script 返回的 dramaturgy_suggestions 由客户决定采纳。原稿是小说/大纲则自动走创作型改写(AI 铺钩子造情感点),两种客户各得其所、无需手动切换。要覆盖默认用 update_project_settings 的 rewrite_pipeline(auto/two_pass/single_forced)与 fidelity_enforce(1=保真硬闸)。客户说「AI 把我的剧本改偏了」时的处置:①确认完整原稿已进 set_script;②rewrite_pipeline 设 two_pass 强制保真后重跑 rewrite_script;③客户确认角色外观后用 update_character 的 profile_locked=1 锁定档案,防后续提取覆盖外貌导致定妆图换脸。★客户想在**别的 AI 平台**改写剧本(常见诉求:第三方模型评估我方改写\"改动太大\",客户想自己掌控改动幅度):先调 get_script_format_spec 拿平台认可的格式契约(markdown 范本 + 可直接转发给外部模型的 external_prompt + 空白骨架),把 external_prompt+范本+客户原稿一起交给那个平台;拿回整理稿后**先调 check_script_format 自查**(免费·纯规则·不调模型),errors 清零后有两条出口:【A】adopt_external_script 直接落为可拍稿(我方 AI 不介入·秒级·不计费,前提是外部稿含制作层标注);【B】set_script 灌回原稿位 + rewrite_script 走保真两步(外部只做剧情层时选这条,标注由平台补;客户自写的标注在这条路上会被剥掉重写)。★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。★★客户交来的**已经是成品分镜表**(逐镜写了秒数/景别/运镜)时,以上两条都不适用——直接用 import_storyboard_table 建分镜,跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。★两条导入通道都是确定性的——写错了也会原样建进去,所以**先取契约再自检再导**:分镜表走 get_storyboard_table_spec → check_storyboard_table → import_storyboard_table;客户自己的工具/表格能导出结构化数据、或让外部 AI 直接产 JSON 时走 get_bulk_import_spec → check_bulk_import → bulk_import_storyboards(角色+场景+分镜一次建好)。用 get_pipeline_status 查进度(按项目类型返回专属步骤)。",
         "tags": [
           "episodes"
         ],
@@ -3984,7 +4091,7 @@
       "post": {
         "operationId": "rewrite_script",
         "summary": "AI 改写:把原始剧本改写成可拍稿(读 content → 写 script_content)",
-        "description": "AI 改写:把原始剧本改写成可拍稿(读 content → 写 script_content)。按项目类型自动选改写 agent★保真自动路由:原稿已是剧本形态时自动走两步保真(台词逐句机器锁定、AI 不加戏,剧作缺口进 dramaturgy_suggestions 由客户决定);原稿是小说/大纲则走创作型改写。(广告走 ad 改写;MV 不走标准改写会被拦)。后台异步(分钟级),文本步按 token 后付、不欠费,无需报价。完成后用 get_script 审阅、edit_rewritten_script 改稿。★典型耗时 2~4 分钟(生产实测 ≈169 秒)。**60 秒内查不到结果是正常的,不是失败**——用 get_run_status 判断还在不在跑,别急着重发。★★**本工具是\"从原稿整篇重来\",不是\"再改一版\"**:已有可拍稿时重跑会把当前稿连同已做的所有修正一起覆盖,而且新一版**不保证保留旧版已经改好的地方**(生产三版实测:上一版拆好的长旁白段下一版又合回去、上一版正确的年代服装下一版漂走)。响应里的 overwrites_existing_script=true 就是这个意思。所以**首次改写成功之后,后续所有修改一律用 edit_rewritten_script 点改**——免费、秒级、只动指定的那几场,其余逐字不变,结果确定不抽卡;只有\"要一个完全不同的版本\"才重跑本工具。误重跑后用 get_script(include_previous=1) 取回上一版。★三档执行策略(别把三档混着问客户):①【基础项目设定·免费·必做地基·建剧即设好,别建空壳】project_type/setting_brief(世界观·ERA LOCK)/ethnicity(族裔)/画幅分辨率,以及一致性锚 cinematography_prompt(摄影DNA)·art_bible(美术圣经)·visual_lock(视觉锁定)——全免费,是驱动全链一致性的地基;不设好,后续所有生成都跑偏、返工重花钱。用 create_drama/update_project_settings 直接设。★visual_lock/art_bible 只写画面级/世界级锁(镜头语言·环境·美术基调·禁入元素),**绝不为具体角色钉服装/发型/外观细节**——角色外观的唯一真相源是 extract_assets 产出的人物档案(要改走 update_character);两处都写必然互相矛盾,定妆图跟档案、设定图跟视觉锁,一致性闸按定妆图拒收 → 设定图/镜头帧**结构性连拒**,重掷多少次都过不了、纯白花钱。★★【逐环节审查协议·全部免费·这是防废片的主线,不是可选项】每个环节产出后先审查、把结论原样告诉客户,再进下一步。**三道硬闸(不过会被 400 拒)**:①改写稿产出后 → review_script(在 extract_assets / generate_storyboards 之前);②分镜产出后 → review_storyboards(在 generate_frames 之前);③镜头图片产出后 → review_frames(在 generate_videos 之前)。每次审查返回 review_token,把它随下游收费工具一起传;findings 逐条讲给客户(code=问题类型·shots=命中镜号·action=该调哪个工具修),按 action 修完后**复审**再走。审查后又改了内容 → token 自动失效,复审一次即可(免费)。有 error 时默认拦截,只有客户明确知情并坚持才带 acknowledge_review:true——别替客户做这个决定。**软引导(不阻断但强烈建议,同样免费)**:出图/出视频前跑 run_precheck(揪出必被厂商拒的镜,防白花钱);分镜后跑 get_health_report;定妆图出完用 get_characters 核对每个出场角色都有 image/sheet;出帧后用 get_storyboards 看 frame_status 与 fail_reason/fail_hint(failed 的镜先修再往下,别带着废帧出视频);出视频后同样看 video_status;成片前用 get_pipeline_status 确认没有缺镜。★**禁止一路 generate 到底**:不审查就连推的做法,问题会在每一层被放大,最后整集废掉重来——而重来的每一次出图/出视频都是真扣费。审查全部免费,拦下来一分钱不花。②【产线主干·按序不跳步·★先分镜再建资产】set_script→rewrite_script→★review_script→extract_assets→storyboards(先分镜·纯文本拆镜)→★review_storyboards→★剧本纪律(端点强制,绕不过):原始素材(梗概/大纲/成品稿都算)一律放 set_script,**必须经 rewrite_script 产出 AI 改写稿**——把自己写好的剧本直接贴进 edit_rewritten_script 绕过改写会被 400 拒(没有改写稿就没有可改的对象),extract_assets 同样要求基于改写稿。改写后的所有修改按 AI 产物的结构化格式做:改稿 edit_rewritten_script(润色/纠正)、人物档案 update_character、分镜 update_shot/replace_shot_dialogue——别回头整篇替换剧本或在设定字段里另写一套,两套真相源打架是一致性事故的头号根源。★★**改写成功一次后就别再重跑 rewrite_script**:它是从原稿整篇重来,当前稿的所有修正全丢,且新版不保证保留旧版已改好的地方(三版实测会来回摆)。要修就 edit_rewritten_script 点改(get_script 取全文 → 只改那几场、其余逐字照抄 → 提交整篇),免费秒级、结果确定;误重跑用 get_script(include_previous=1) 回捞上一版。generate_portraits_and_sheets(定妆图+设定图·分镜后建只给出场角色出图更省)→assign_voices(分配音色)→frames→★review_frames→videos→generate_tts→compose;★别先建角色形象/道具设定图/动作模板再分镜——分镜是纯文本步、不依赖任何图;资产在分镜后建更省更准(动作模板本就必须分镜后)。收费步照现有 quote 报价确认流程。广告另需 add_product+generate_product_sheet;MV 走 set_mv_lyrics→generate_mv_story→generate_mv_script。★世界观概念图=默认必做(提升整剧一致性、很多第三方平台漏做这步):分镜后默认调 generate_world_concept,仍走报价确认流程(告知客户预估点数、确认再扣)——不静默扣费、也别跳过。★分镜后的剧目级资产别漏——尤其 generate_motion_templates(动作模板:从分镜抽取统一全片运动语言,漏了动作会散乱)与 generate_color_script(色彩脚本:统一色调);分镜后、出图前一并做,仍走报价确认。★场景 Bible(每场景详细设定)顺序在**场景图片出图之后**——据出好的场景图完善(MCP 暂无此工具、在官网做);别在出场景图前做场景 Bible。★音频默认用视频原声(use_clip_audio 默认开、跳过 TTS 直接用 AI 视频自带声):建剧/改设定时 AI 应主动告知客户「默认用视频原声,如需 TTS 配音把 use_clip_audio 设 false」,让客户选。★图片模型默认香蕉2(Nano Banana 2 = gemini-3.1-flash-image·整剧统一画风):create_drama/update_project_settings 的 image_model 设,不传即默认香蕉2;可选 gemini-3-pro-image(香蕉Pro·更精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream5.0)/gpt-image-2(ChatGPT Image2);generate_frames 可临时覆盖某次。★视频引擎四选一(drama级·AI 建剧时必须主动按剧选型引导并给价差让客户定):【选型决策树】①写实真人剧→seedance-2.5(默认·指令遵循/人脸细节最强·720p 212点/秒),预算敏感可 hailuo-3(约1/3成本70点/秒·强保真编辑·但单镜约6分钟);②风格化/动画/3D卡通剧·空镜·产品镜→wan3.0(约4折84点/秒·最长30秒·最短2秒计费·单镜约2分钟),赶交付用 wan3.0-prime(126点/秒·约1分钟);③★写实真人剧绝不选 wan3.0/prime——WAN 输出侧真人脸审核在 720p+ 一致拒、重试救不回;④★★叙事剧(有对白、讲连贯故事、镜头节奏要稳的)慎选 wan3.0/prime:WAN 会在**单个分镜片内自行换机位硬切**(实测 11/12 镜有镜内跳切,对照 seedance-2.5 仅 1/6、hailuo-3 为 0/5),成片观感是「一个镜头里画面跳来跳去、切太快」;这是厂商指令遵循弱、提示词层拦不住(我方负向约束早已在其中且实测无效),事后只能换引擎重生。WAN 适合镜头本就短平快的风格化/空镜/产品镜;要稳定单镜叙事请选 seedance-2.5 或 hailuo-3。生成后可用 scan_intra_shot_cuts 核查;④b★★对白密集剧慎选 hailuo-3(与上一条的「镜内自剪」是两回事,这条讲**说不说得全台词**):原生音频引擎会念到镜头结束就停、也会自说自话,实测「台词没念完整」占比 hailuo-3 **50%**(26 镜,均为 8-30 原生音频修复之后所生成,故是引擎本身)、seedance-2.5 **23%**(294 镜);wan3.0 该维度**样本不足未测**(26 个样本全在同一修复之前,修复后仅 2 镜)——不要据此认为 WAN 差。客户报「话没说完」时先跑 scan_dialogue_coverage 分族,别默认去加长镜头(实测镜长够的镜里仍有 32% 没念全);⑤★镜长控制(所有引擎通用,WAN 上尤其明显):单镜保持 3~5 秒。镜头越长模型自由发挥空间越大——实测一个 16 秒单镜(邻镜都是 3~5 秒)在片内换了 4 次场景、人物中途消失 4 秒后又从画面边缘长出来,客户看到的就是「凭空多出一个人」。要长表演请拆成多个短镜再靠帧链衔接,别写 15 秒以上的单镜;【分辨率决策】草稿/迭代期:WAN 剧 480p(42点/秒最省)、其余 720p;成片交付:seedance 剧 720p(高清档停售)、hailuo-3 剧 1080p(=2K·112点/秒)、WAN 剧 1080p(168点/秒);hailuo-3 无独立 480p 档(选了也按 768P 计费);create_drama/update_project_settings 的 video_engine/video_resolution 设,★都必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。★改某一镜画面 / 换定妆图后要让新图生效,走**单镜重生 generate_shot_frame**(平台自动带该镜身份锚·场景道具参考·画风锚,保全片一致);generate_frames 只批量补「缺帧」的镜、已有首帧的镜跳过(正常、不是\"拒绝\"),尾帧用 frame_type=last_frame 可批量补。换定妆图(set_character_portrait)后响应里的 stale_frames 就是被旧图污染、需逐镜重生的镜。★绝不用外部工具自制首尾帧再 upload_shot_frame 来\"改画面\"——外部图无身份锚/画风锚,人物·服装·画风必漂,那才是废片根源;upload_shot_frame 只用于客户自有真实素材。③【可选增强·AI 主动提示客户·报价确认才做】美术圣经生成/视觉锁抽取/色彩脚本/动作模板/场景图/场景组/口型/海报/音效/配乐/字幕翻译——这些提升一致性/质量、大多收费。★AI 应主动告知客户这些可做并给报价,客户确认才跑;既不默默跳过、也不擅自扣费。★两条锁定纪律:①**画幅比例**在 create_drama 即定、drama 级锁定,之后所有出图/出视频/成片都用它、**别中途改**(改了已生成内容画幅会不一致、漂移);不设默认 9:16。②**拆镜每镜 5-7 秒是对 AI 出视频优化的正常时长**,别因「镜偏长」误判就重拆——generate_storyboards 会**替换整集所有分镜**、已出图白费,已有分镜后端会拦、需 confirm_replace。★改写保真(默认 auto 智能路由):set_script 的原稿**本身已是剧本形态**(场景头/对白行结构)时,rewrite_script 自动走两步保真——客户台词逐句由机器闸锁定(丢一句即内部拒收重做)、AI 绝不加戏;剧作缺口(钩子/情感锚点)不自动补,写进 get_script 返回的 dramaturgy_suggestions 由客户决定采纳。原稿是小说/大纲则自动走创作型改写(AI 铺钩子造情感点),两种客户各得其所、无需手动切换。要覆盖默认用 update_project_settings 的 rewrite_pipeline(auto/two_pass/single_forced)与 fidelity_enforce(1=保真硬闸)。客户说「AI 把我的剧本改偏了」时的处置:①确认完整原稿已进 set_script;②rewrite_pipeline 设 two_pass 强制保真后重跑 rewrite_script;③客户确认角色外观后用 update_character 的 profile_locked=1 锁定档案,防后续提取覆盖外貌导致定妆图换脸。★客户想在**别的 AI 平台**改写剧本(常见诉求:第三方模型评估我方改写\"改动太大\",客户想自己掌控改动幅度):先调 get_script_format_spec 拿平台认可的格式契约(markdown 范本 + 可直接转发给外部模型的 external_prompt + 空白骨架),把 external_prompt+范本+客户原稿一起交给那个平台;拿回整理稿后**先调 check_script_format 自查**(免费·纯规则·不调模型),errors 清零后有两条出口:【A】adopt_external_script 直接落为可拍稿(我方 AI 不介入·秒级·不计费,前提是外部稿含制作层标注);【B】set_script 灌回原稿位 + rewrite_script 走保真两步(外部只做剧情层时选这条,标注由平台补;客户自写的标注在这条路上会被剥掉重写)。★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。★★客户交来的**已经是成品分镜表**(逐镜写了秒数/景别/运镜)时,以上两条都不适用——直接用 import_storyboard_table 建分镜,跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。用 get_pipeline_status 查进度(按项目类型返回专属步骤)。",
+        "description": "AI 改写:把原始剧本改写成可拍稿(读 content → 写 script_content)。按项目类型自动选改写 agent★保真自动路由:原稿已是剧本形态时自动走两步保真(台词逐句机器锁定、AI 不加戏,剧作缺口进 dramaturgy_suggestions 由客户决定);原稿是小说/大纲则走创作型改写。(广告走 ad 改写;MV 不走标准改写会被拦)。后台异步(分钟级),文本步按 token 后付、不欠费,无需报价。完成后用 get_script 审阅、edit_rewritten_script 改稿。★典型耗时 2~4 分钟(生产实测 ≈169 秒)。**60 秒内查不到结果是正常的,不是失败**——用 get_run_status 判断还在不在跑,别急着重发。★★**本工具是\"从原稿整篇重来\",不是\"再改一版\"**:已有可拍稿时重跑会把当前稿连同已做的所有修正一起覆盖,而且新一版**不保证保留旧版已经改好的地方**(生产三版实测:上一版拆好的长旁白段下一版又合回去、上一版正确的年代服装下一版漂走)。响应里的 overwrites_existing_script=true 就是这个意思。所以**首次改写成功之后,后续所有修改一律用 edit_rewritten_script 点改**——免费、秒级、只动指定的那几场,其余逐字不变,结果确定不抽卡;只有\"要一个完全不同的版本\"才重跑本工具。误重跑后用 get_script(include_previous=1) 取回上一版。★三档执行策略(别把三档混着问客户):①【基础项目设定·免费·必做地基·建剧即设好,别建空壳】project_type/setting_brief(世界观·ERA LOCK)/ethnicity(族裔)/画幅分辨率,以及一致性锚 cinematography_prompt(摄影DNA)·art_bible(美术圣经)·visual_lock(视觉锁定)——全免费,是驱动全链一致性的地基;不设好,后续所有生成都跑偏、返工重花钱。用 create_drama/update_project_settings 直接设。★visual_lock/art_bible 只写画面级/世界级锁(镜头语言·环境·美术基调·禁入元素),**绝不为具体角色钉服装/发型/外观细节**——角色外观的唯一真相源是 extract_assets 产出的人物档案(要改走 update_character);两处都写必然互相矛盾,定妆图跟档案、设定图跟视觉锁,一致性闸按定妆图拒收 → 设定图/镜头帧**结构性连拒**,重掷多少次都过不了、纯白花钱。★★【逐环节审查协议·全部免费·这是防废片的主线,不是可选项】每个环节产出后先审查、把结论原样告诉客户,再进下一步。**三道硬闸(不过会被 400 拒)**:①改写稿产出后 → review_script(在 extract_assets / generate_storyboards 之前);②分镜产出后 → review_storyboards(在 generate_frames 之前);③镜头图片产出后 → review_frames(在 generate_videos 之前)。每次审查返回 review_token,把它随下游收费工具一起传;findings 逐条讲给客户(code=问题类型·shots=命中镜号·action=该调哪个工具修),按 action 修完后**复审**再走。审查后又改了内容 → token 自动失效,复审一次即可(免费)。有 error 时默认拦截,只有客户明确知情并坚持才带 acknowledge_review:true——别替客户做这个决定。**软引导(不阻断但强烈建议,同样免费)**:出图/出视频前跑 run_precheck(揪出必被厂商拒的镜,防白花钱);分镜后跑 get_health_report;定妆图出完用 get_characters 核对每个出场角色都有 image/sheet;出帧后用 get_storyboards 看 frame_status 与 fail_reason/fail_hint(failed 的镜先修再往下,别带着废帧出视频);出视频后同样看 video_status;成片前用 get_pipeline_status 确认没有缺镜。★**禁止一路 generate 到底**:不审查就连推的做法,问题会在每一层被放大,最后整集废掉重来——而重来的每一次出图/出视频都是真扣费。审查全部免费,拦下来一分钱不花。②【产线主干·按序不跳步·★先分镜再建资产】set_script→rewrite_script→★review_script→extract_assets→storyboards(先分镜·纯文本拆镜)→★review_storyboards→★剧本纪律(端点强制,绕不过):原始素材(梗概/大纲/成品稿都算)一律放 set_script,**必须经 rewrite_script 产出 AI 改写稿**——把自己写好的剧本直接贴进 edit_rewritten_script 绕过改写会被 400 拒(没有改写稿就没有可改的对象),extract_assets 同样要求基于改写稿。改写后的所有修改按 AI 产物的结构化格式做:改稿 edit_rewritten_script(润色/纠正)、人物档案 update_character、分镜 update_shot/replace_shot_dialogue——别回头整篇替换剧本或在设定字段里另写一套,两套真相源打架是一致性事故的头号根源。★★**改写成功一次后就别再重跑 rewrite_script**:它是从原稿整篇重来,当前稿的所有修正全丢,且新版不保证保留旧版已改好的地方(三版实测会来回摆)。要修就 edit_rewritten_script 点改(get_script 取全文 → 只改那几场、其余逐字照抄 → 提交整篇),免费秒级、结果确定;误重跑用 get_script(include_previous=1) 回捞上一版。generate_portraits_and_sheets(定妆图+设定图·分镜后建只给出场角色出图更省)→assign_voices(分配音色)→frames→★review_frames→videos→generate_tts→compose;★别先建角色形象/道具设定图/动作模板再分镜——分镜是纯文本步、不依赖任何图;资产在分镜后建更省更准(动作模板本就必须分镜后)。收费步照现有 quote 报价确认流程。广告另需 add_product+generate_product_sheet;MV 走 set_mv_lyrics→generate_mv_story→generate_mv_script。★世界观概念图=默认必做(提升整剧一致性、很多第三方平台漏做这步):分镜后默认调 generate_world_concept,仍走报价确认流程(告知客户预估点数、确认再扣)——不静默扣费、也别跳过。★分镜后的剧目级资产别漏——尤其 generate_motion_templates(动作模板:从分镜抽取统一全片运动语言,漏了动作会散乱)与 generate_color_script(色彩脚本:统一色调);分镜后、出图前一并做,仍走报价确认。★场景 Bible(每场景详细设定)顺序在**场景图片出图之后**——据出好的场景图完善(MCP 暂无此工具、在官网做);别在出场景图前做场景 Bible。★音频默认用视频原声(use_clip_audio 默认开、跳过 TTS 直接用 AI 视频自带声):建剧/改设定时 AI 应主动告知客户「默认用视频原声,如需 TTS 配音把 use_clip_audio 设 false」,让客户选。★图片模型默认香蕉2(Nano Banana 2 = gemini-3.1-flash-image·整剧统一画风):create_drama/update_project_settings 的 image_model 设,不传即默认香蕉2;可选 gemini-3-pro-image(香蕉Pro·更精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream5.0)/gpt-image-2(ChatGPT Image2);generate_frames 可临时覆盖某次。★视频引擎四选一(drama级·AI 建剧时必须主动按剧选型引导并给价差让客户定):【选型决策树】①写实真人剧→seedance-2.5(默认·指令遵循/人脸细节最强·720p 212点/秒),预算敏感可 hailuo-3(约1/3成本70点/秒·强保真编辑·但单镜约6分钟);②风格化/动画/3D卡通剧·空镜·产品镜→wan3.0(约4折84点/秒·最长30秒·最短2秒计费·单镜约2分钟),赶交付用 wan3.0-prime(126点/秒·约1分钟);③★写实真人剧绝不选 wan3.0/prime——WAN 输出侧真人脸审核在 720p+ 一致拒、重试救不回;④★★叙事剧(有对白、讲连贯故事、镜头节奏要稳的)慎选 wan3.0/prime:WAN 会在**单个分镜片内自行换机位硬切**(实测 11/12 镜有镜内跳切,对照 seedance-2.5 仅 1/6、hailuo-3 为 0/5),成片观感是「一个镜头里画面跳来跳去、切太快」;这是厂商指令遵循弱、提示词层拦不住(我方负向约束早已在其中且实测无效),事后只能换引擎重生。WAN 适合镜头本就短平快的风格化/空镜/产品镜;要稳定单镜叙事请选 seedance-2.5 或 hailuo-3。生成后可用 scan_intra_shot_cuts 核查;④b★★对白密集剧慎选 hailuo-3(与上一条的「镜内自剪」是两回事,这条讲**说不说得全台词**):原生音频引擎会念到镜头结束就停、也会自说自话,实测「台词没念完整」占比 hailuo-3 **50%**(26 镜,均为 8-30 原生音频修复之后所生成,故是引擎本身)、seedance-2.5 **23%**(294 镜);wan3.0 该维度**样本不足未测**(26 个样本全在同一修复之前,修复后仅 2 镜)——不要据此认为 WAN 差。客户报「话没说完」时先跑 scan_dialogue_coverage 分族,别默认去加长镜头(实测镜长够的镜里仍有 32% 没念全);⑤★镜长控制(所有引擎通用,WAN 上尤其明显):单镜保持 3~5 秒。镜头越长模型自由发挥空间越大——实测一个 16 秒单镜(邻镜都是 3~5 秒)在片内换了 4 次场景、人物中途消失 4 秒后又从画面边缘长出来,客户看到的就是「凭空多出一个人」。要长表演请拆成多个短镜再靠帧链衔接,别写 15 秒以上的单镜;【分辨率决策】草稿/迭代期:WAN 剧 480p(42点/秒最省)、其余 720p;成片交付:seedance 剧 720p(高清档停售)、hailuo-3 剧 1080p(=2K·112点/秒)、WAN 剧 1080p(168点/秒);hailuo-3 无独立 480p 档(选了也按 768P 计费);create_drama/update_project_settings 的 video_engine/video_resolution 设,★都必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。★改某一镜画面 / 换定妆图后要让新图生效,走**单镜重生 generate_shot_frame**(平台自动带该镜身份锚·场景道具参考·画风锚,保全片一致);generate_frames 只批量补「缺帧」的镜、已有首帧的镜跳过(正常、不是\"拒绝\"),尾帧用 frame_type=last_frame 可批量补。换定妆图(set_character_portrait)后响应里的 stale_frames 就是被旧图污染、需逐镜重生的镜。★绝不用外部工具自制首尾帧再 upload_shot_frame 来\"改画面\"——外部图无身份锚/画风锚,人物·服装·画风必漂,那才是废片根源;upload_shot_frame 只用于客户自有真实素材。③【可选增强·AI 主动提示客户·报价确认才做】美术圣经生成/视觉锁抽取/色彩脚本/动作模板/场景图/场景组/口型/海报/音效/配乐/字幕翻译——这些提升一致性/质量、大多收费。★AI 应主动告知客户这些可做并给报价,客户确认才跑;既不默默跳过、也不擅自扣费。★两条锁定纪律:①**画幅比例**在 create_drama 即定、drama 级锁定,之后所有出图/出视频/成片都用它、**别中途改**(改了已生成内容画幅会不一致、漂移);不设默认 9:16。②**拆镜每镜 5-7 秒是对 AI 出视频优化的正常时长**,别因「镜偏长」误判就重拆——generate_storyboards 会**替换整集所有分镜**、已出图白费,已有分镜后端会拦、需 confirm_replace。★改写保真(默认 auto 智能路由):set_script 的原稿**本身已是剧本形态**(场景头/对白行结构)时,rewrite_script 自动走两步保真——客户台词逐句由机器闸锁定(丢一句即内部拒收重做)、AI 绝不加戏;剧作缺口(钩子/情感锚点)不自动补,写进 get_script 返回的 dramaturgy_suggestions 由客户决定采纳。原稿是小说/大纲则自动走创作型改写(AI 铺钩子造情感点),两种客户各得其所、无需手动切换。要覆盖默认用 update_project_settings 的 rewrite_pipeline(auto/two_pass/single_forced)与 fidelity_enforce(1=保真硬闸)。客户说「AI 把我的剧本改偏了」时的处置:①确认完整原稿已进 set_script;②rewrite_pipeline 设 two_pass 强制保真后重跑 rewrite_script;③客户确认角色外观后用 update_character 的 profile_locked=1 锁定档案,防后续提取覆盖外貌导致定妆图换脸。★客户想在**别的 AI 平台**改写剧本(常见诉求:第三方模型评估我方改写\"改动太大\",客户想自己掌控改动幅度):先调 get_script_format_spec 拿平台认可的格式契约(markdown 范本 + 可直接转发给外部模型的 external_prompt + 空白骨架),把 external_prompt+范本+客户原稿一起交给那个平台;拿回整理稿后**先调 check_script_format 自查**(免费·纯规则·不调模型),errors 清零后有两条出口:【A】adopt_external_script 直接落为可拍稿(我方 AI 不介入·秒级·不计费,前提是外部稿含制作层标注);【B】set_script 灌回原稿位 + rewrite_script 走保真两步(外部只做剧情层时选这条,标注由平台补;客户自写的标注在这条路上会被剥掉重写)。★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。★★客户交来的**已经是成品分镜表**(逐镜写了秒数/景别/运镜)时,以上两条都不适用——直接用 import_storyboard_table 建分镜,跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。★两条导入通道都是确定性的——写错了也会原样建进去,所以**先取契约再自检再导**:分镜表走 get_storyboard_table_spec → check_storyboard_table → import_storyboard_table;客户自己的工具/表格能导出结构化数据、或让外部 AI 直接产 JSON 时走 get_bulk_import_spec → check_bulk_import → bulk_import_storyboards(角色+场景+分镜一次建好)。用 get_pipeline_status 查进度(按项目类型返回专属步骤)。",
         "tags": [
           "episodes"
         ],
@@ -4282,7 +4389,7 @@
       "put": {
         "operationId": "set_script",
         "summary": "给某一集设置**原始剧本**(content)",
-        "description": "给某一集设置**原始剧本**(content)。这是 AI 改写的输入,不是最终可拍稿。免费。梗概/大纲/自己写好的成品稿都放这里,设完**必须调 rewrite_script 做 AI 改写**——不能跳过改写直接把稿子贴进 edit_rewritten_script(会被拒)。★三档执行策略(别把三档混着问客户):①【基础项目设定·免费·必做地基·建剧即设好,别建空壳】project_type/setting_brief(世界观·ERA LOCK)/ethnicity(族裔)/画幅分辨率,以及一致性锚 cinematography_prompt(摄影DNA)·art_bible(美术圣经)·visual_lock(视觉锁定)——全免费,是驱动全链一致性的地基;不设好,后续所有生成都跑偏、返工重花钱。用 create_drama/update_project_settings 直接设。★visual_lock/art_bible 只写画面级/世界级锁(镜头语言·环境·美术基调·禁入元素),**绝不为具体角色钉服装/发型/外观细节**——角色外观的唯一真相源是 extract_assets 产出的人物档案(要改走 update_character);两处都写必然互相矛盾,定妆图跟档案、设定图跟视觉锁,一致性闸按定妆图拒收 → 设定图/镜头帧**结构性连拒**,重掷多少次都过不了、纯白花钱。★★【逐环节审查协议·全部免费·这是防废片的主线,不是可选项】每个环节产出后先审查、把结论原样告诉客户,再进下一步。**三道硬闸(不过会被 400 拒)**:①改写稿产出后 → review_script(在 extract_assets / generate_storyboards 之前);②分镜产出后 → review_storyboards(在 generate_frames 之前);③镜头图片产出后 → review_frames(在 generate_videos 之前)。每次审查返回 review_token,把它随下游收费工具一起传;findings 逐条讲给客户(code=问题类型·shots=命中镜号·action=该调哪个工具修),按 action 修完后**复审**再走。审查后又改了内容 → token 自动失效,复审一次即可(免费)。有 error 时默认拦截,只有客户明确知情并坚持才带 acknowledge_review:true——别替客户做这个决定。**软引导(不阻断但强烈建议,同样免费)**:出图/出视频前跑 run_precheck(揪出必被厂商拒的镜,防白花钱);分镜后跑 get_health_report;定妆图出完用 get_characters 核对每个出场角色都有 image/sheet;出帧后用 get_storyboards 看 frame_status 与 fail_reason/fail_hint(failed 的镜先修再往下,别带着废帧出视频);出视频后同样看 video_status;成片前用 get_pipeline_status 确认没有缺镜。★**禁止一路 generate 到底**:不审查就连推的做法,问题会在每一层被放大,最后整集废掉重来——而重来的每一次出图/出视频都是真扣费。审查全部免费,拦下来一分钱不花。②【产线主干·按序不跳步·★先分镜再建资产】set_script→rewrite_script→★review_script→extract_assets→storyboards(先分镜·纯文本拆镜)→★review_storyboards→★剧本纪律(端点强制,绕不过):原始素材(梗概/大纲/成品稿都算)一律放 set_script,**必须经 rewrite_script 产出 AI 改写稿**——把自己写好的剧本直接贴进 edit_rewritten_script 绕过改写会被 400 拒(没有改写稿就没有可改的对象),extract_assets 同样要求基于改写稿。改写后的所有修改按 AI 产物的结构化格式做:改稿 edit_rewritten_script(润色/纠正)、人物档案 update_character、分镜 update_shot/replace_shot_dialogue——别回头整篇替换剧本或在设定字段里另写一套,两套真相源打架是一致性事故的头号根源。★★**改写成功一次后就别再重跑 rewrite_script**:它是从原稿整篇重来,当前稿的所有修正全丢,且新版不保证保留旧版已改好的地方(三版实测会来回摆)。要修就 edit_rewritten_script 点改(get_script 取全文 → 只改那几场、其余逐字照抄 → 提交整篇),免费秒级、结果确定;误重跑用 get_script(include_previous=1) 回捞上一版。generate_portraits_and_sheets(定妆图+设定图·分镜后建只给出场角色出图更省)→assign_voices(分配音色)→frames→★review_frames→videos→generate_tts→compose;★别先建角色形象/道具设定图/动作模板再分镜——分镜是纯文本步、不依赖任何图;资产在分镜后建更省更准(动作模板本就必须分镜后)。收费步照现有 quote 报价确认流程。广告另需 add_product+generate_product_sheet;MV 走 set_mv_lyrics→generate_mv_story→generate_mv_script。★世界观概念图=默认必做(提升整剧一致性、很多第三方平台漏做这步):分镜后默认调 generate_world_concept,仍走报价确认流程(告知客户预估点数、确认再扣)——不静默扣费、也别跳过。★分镜后的剧目级资产别漏——尤其 generate_motion_templates(动作模板:从分镜抽取统一全片运动语言,漏了动作会散乱)与 generate_color_script(色彩脚本:统一色调);分镜后、出图前一并做,仍走报价确认。★场景 Bible(每场景详细设定)顺序在**场景图片出图之后**——据出好的场景图完善(MCP 暂无此工具、在官网做);别在出场景图前做场景 Bible。★音频默认用视频原声(use_clip_audio 默认开、跳过 TTS 直接用 AI 视频自带声):建剧/改设定时 AI 应主动告知客户「默认用视频原声,如需 TTS 配音把 use_clip_audio 设 false」,让客户选。★图片模型默认香蕉2(Nano Banana 2 = gemini-3.1-flash-image·整剧统一画风):create_drama/update_project_settings 的 image_model 设,不传即默认香蕉2;可选 gemini-3-pro-image(香蕉Pro·更精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream5.0)/gpt-image-2(ChatGPT Image2);generate_frames 可临时覆盖某次。★视频引擎四选一(drama级·AI 建剧时必须主动按剧选型引导并给价差让客户定):【选型决策树】①写实真人剧→seedance-2.5(默认·指令遵循/人脸细节最强·720p 212点/秒),预算敏感可 hailuo-3(约1/3成本70点/秒·强保真编辑·但单镜约6分钟);②风格化/动画/3D卡通剧·空镜·产品镜→wan3.0(约4折84点/秒·最长30秒·最短2秒计费·单镜约2分钟),赶交付用 wan3.0-prime(126点/秒·约1分钟);③★写实真人剧绝不选 wan3.0/prime——WAN 输出侧真人脸审核在 720p+ 一致拒、重试救不回;④★★叙事剧(有对白、讲连贯故事、镜头节奏要稳的)慎选 wan3.0/prime:WAN 会在**单个分镜片内自行换机位硬切**(实测 11/12 镜有镜内跳切,对照 seedance-2.5 仅 1/6、hailuo-3 为 0/5),成片观感是「一个镜头里画面跳来跳去、切太快」;这是厂商指令遵循弱、提示词层拦不住(我方负向约束早已在其中且实测无效),事后只能换引擎重生。WAN 适合镜头本就短平快的风格化/空镜/产品镜;要稳定单镜叙事请选 seedance-2.5 或 hailuo-3。生成后可用 scan_intra_shot_cuts 核查;④b★★对白密集剧慎选 hailuo-3(与上一条的「镜内自剪」是两回事,这条讲**说不说得全台词**):原生音频引擎会念到镜头结束就停、也会自说自话,实测「台词没念完整」占比 hailuo-3 **50%**(26 镜,均为 8-30 原生音频修复之后所生成,故是引擎本身)、seedance-2.5 **23%**(294 镜);wan3.0 该维度**样本不足未测**(26 个样本全在同一修复之前,修复后仅 2 镜)——不要据此认为 WAN 差。客户报「话没说完」时先跑 scan_dialogue_coverage 分族,别默认去加长镜头(实测镜长够的镜里仍有 32% 没念全);⑤★镜长控制(所有引擎通用,WAN 上尤其明显):单镜保持 3~5 秒。镜头越长模型自由发挥空间越大——实测一个 16 秒单镜(邻镜都是 3~5 秒)在片内换了 4 次场景、人物中途消失 4 秒后又从画面边缘长出来,客户看到的就是「凭空多出一个人」。要长表演请拆成多个短镜再靠帧链衔接,别写 15 秒以上的单镜;【分辨率决策】草稿/迭代期:WAN 剧 480p(42点/秒最省)、其余 720p;成片交付:seedance 剧 720p(高清档停售)、hailuo-3 剧 1080p(=2K·112点/秒)、WAN 剧 1080p(168点/秒);hailuo-3 无独立 480p 档(选了也按 768P 计费);create_drama/update_project_settings 的 video_engine/video_resolution 设,★都必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。★改某一镜画面 / 换定妆图后要让新图生效,走**单镜重生 generate_shot_frame**(平台自动带该镜身份锚·场景道具参考·画风锚,保全片一致);generate_frames 只批量补「缺帧」的镜、已有首帧的镜跳过(正常、不是\"拒绝\"),尾帧用 frame_type=last_frame 可批量补。换定妆图(set_character_portrait)后响应里的 stale_frames 就是被旧图污染、需逐镜重生的镜。★绝不用外部工具自制首尾帧再 upload_shot_frame 来\"改画面\"——外部图无身份锚/画风锚,人物·服装·画风必漂,那才是废片根源;upload_shot_frame 只用于客户自有真实素材。③【可选增强·AI 主动提示客户·报价确认才做】美术圣经生成/视觉锁抽取/色彩脚本/动作模板/场景图/场景组/口型/海报/音效/配乐/字幕翻译——这些提升一致性/质量、大多收费。★AI 应主动告知客户这些可做并给报价,客户确认才跑;既不默默跳过、也不擅自扣费。★两条锁定纪律:①**画幅比例**在 create_drama 即定、drama 级锁定,之后所有出图/出视频/成片都用它、**别中途改**(改了已生成内容画幅会不一致、漂移);不设默认 9:16。②**拆镜每镜 5-7 秒是对 AI 出视频优化的正常时长**,别因「镜偏长」误判就重拆——generate_storyboards 会**替换整集所有分镜**、已出图白费,已有分镜后端会拦、需 confirm_replace。★改写保真(默认 auto 智能路由):set_script 的原稿**本身已是剧本形态**(场景头/对白行结构)时,rewrite_script 自动走两步保真——客户台词逐句由机器闸锁定(丢一句即内部拒收重做)、AI 绝不加戏;剧作缺口(钩子/情感锚点)不自动补,写进 get_script 返回的 dramaturgy_suggestions 由客户决定采纳。原稿是小说/大纲则自动走创作型改写(AI 铺钩子造情感点),两种客户各得其所、无需手动切换。要覆盖默认用 update_project_settings 的 rewrite_pipeline(auto/two_pass/single_forced)与 fidelity_enforce(1=保真硬闸)。客户说「AI 把我的剧本改偏了」时的处置:①确认完整原稿已进 set_script;②rewrite_pipeline 设 two_pass 强制保真后重跑 rewrite_script;③客户确认角色外观后用 update_character 的 profile_locked=1 锁定档案,防后续提取覆盖外貌导致定妆图换脸。★客户想在**别的 AI 平台**改写剧本(常见诉求:第三方模型评估我方改写\"改动太大\",客户想自己掌控改动幅度):先调 get_script_format_spec 拿平台认可的格式契约(markdown 范本 + 可直接转发给外部模型的 external_prompt + 空白骨架),把 external_prompt+范本+客户原稿一起交给那个平台;拿回整理稿后**先调 check_script_format 自查**(免费·纯规则·不调模型),errors 清零后有两条出口:【A】adopt_external_script 直接落为可拍稿(我方 AI 不介入·秒级·不计费,前提是外部稿含制作层标注);【B】set_script 灌回原稿位 + rewrite_script 走保真两步(外部只做剧情层时选这条,标注由平台补;客户自写的标注在这条路上会被剥掉重写)。★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。★★客户交来的**已经是成品分镜表**(逐镜写了秒数/景别/运镜)时,以上两条都不适用——直接用 import_storyboard_table 建分镜,跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。用 get_pipeline_status 查进度(按项目类型返回专属步骤)。",
+        "description": "给某一集设置**原始剧本**(content)。这是 AI 改写的输入,不是最终可拍稿。免费。梗概/大纲/自己写好的成品稿都放这里,设完**必须调 rewrite_script 做 AI 改写**——不能跳过改写直接把稿子贴进 edit_rewritten_script(会被拒)。★三档执行策略(别把三档混着问客户):①【基础项目设定·免费·必做地基·建剧即设好,别建空壳】project_type/setting_brief(世界观·ERA LOCK)/ethnicity(族裔)/画幅分辨率,以及一致性锚 cinematography_prompt(摄影DNA)·art_bible(美术圣经)·visual_lock(视觉锁定)——全免费,是驱动全链一致性的地基;不设好,后续所有生成都跑偏、返工重花钱。用 create_drama/update_project_settings 直接设。★visual_lock/art_bible 只写画面级/世界级锁(镜头语言·环境·美术基调·禁入元素),**绝不为具体角色钉服装/发型/外观细节**——角色外观的唯一真相源是 extract_assets 产出的人物档案(要改走 update_character);两处都写必然互相矛盾,定妆图跟档案、设定图跟视觉锁,一致性闸按定妆图拒收 → 设定图/镜头帧**结构性连拒**,重掷多少次都过不了、纯白花钱。★★【逐环节审查协议·全部免费·这是防废片的主线,不是可选项】每个环节产出后先审查、把结论原样告诉客户,再进下一步。**三道硬闸(不过会被 400 拒)**:①改写稿产出后 → review_script(在 extract_assets / generate_storyboards 之前);②分镜产出后 → review_storyboards(在 generate_frames 之前);③镜头图片产出后 → review_frames(在 generate_videos 之前)。每次审查返回 review_token,把它随下游收费工具一起传;findings 逐条讲给客户(code=问题类型·shots=命中镜号·action=该调哪个工具修),按 action 修完后**复审**再走。审查后又改了内容 → token 自动失效,复审一次即可(免费)。有 error 时默认拦截,只有客户明确知情并坚持才带 acknowledge_review:true——别替客户做这个决定。**软引导(不阻断但强烈建议,同样免费)**:出图/出视频前跑 run_precheck(揪出必被厂商拒的镜,防白花钱);分镜后跑 get_health_report;定妆图出完用 get_characters 核对每个出场角色都有 image/sheet;出帧后用 get_storyboards 看 frame_status 与 fail_reason/fail_hint(failed 的镜先修再往下,别带着废帧出视频);出视频后同样看 video_status;成片前用 get_pipeline_status 确认没有缺镜。★**禁止一路 generate 到底**:不审查就连推的做法,问题会在每一层被放大,最后整集废掉重来——而重来的每一次出图/出视频都是真扣费。审查全部免费,拦下来一分钱不花。②【产线主干·按序不跳步·★先分镜再建资产】set_script→rewrite_script→★review_script→extract_assets→storyboards(先分镜·纯文本拆镜)→★review_storyboards→★剧本纪律(端点强制,绕不过):原始素材(梗概/大纲/成品稿都算)一律放 set_script,**必须经 rewrite_script 产出 AI 改写稿**——把自己写好的剧本直接贴进 edit_rewritten_script 绕过改写会被 400 拒(没有改写稿就没有可改的对象),extract_assets 同样要求基于改写稿。改写后的所有修改按 AI 产物的结构化格式做:改稿 edit_rewritten_script(润色/纠正)、人物档案 update_character、分镜 update_shot/replace_shot_dialogue——别回头整篇替换剧本或在设定字段里另写一套,两套真相源打架是一致性事故的头号根源。★★**改写成功一次后就别再重跑 rewrite_script**:它是从原稿整篇重来,当前稿的所有修正全丢,且新版不保证保留旧版已改好的地方(三版实测会来回摆)。要修就 edit_rewritten_script 点改(get_script 取全文 → 只改那几场、其余逐字照抄 → 提交整篇),免费秒级、结果确定;误重跑用 get_script(include_previous=1) 回捞上一版。generate_portraits_and_sheets(定妆图+设定图·分镜后建只给出场角色出图更省)→assign_voices(分配音色)→frames→★review_frames→videos→generate_tts→compose;★别先建角色形象/道具设定图/动作模板再分镜——分镜是纯文本步、不依赖任何图;资产在分镜后建更省更准(动作模板本就必须分镜后)。收费步照现有 quote 报价确认流程。广告另需 add_product+generate_product_sheet;MV 走 set_mv_lyrics→generate_mv_story→generate_mv_script。★世界观概念图=默认必做(提升整剧一致性、很多第三方平台漏做这步):分镜后默认调 generate_world_concept,仍走报价确认流程(告知客户预估点数、确认再扣)——不静默扣费、也别跳过。★分镜后的剧目级资产别漏——尤其 generate_motion_templates(动作模板:从分镜抽取统一全片运动语言,漏了动作会散乱)与 generate_color_script(色彩脚本:统一色调);分镜后、出图前一并做,仍走报价确认。★场景 Bible(每场景详细设定)顺序在**场景图片出图之后**——据出好的场景图完善(MCP 暂无此工具、在官网做);别在出场景图前做场景 Bible。★音频默认用视频原声(use_clip_audio 默认开、跳过 TTS 直接用 AI 视频自带声):建剧/改设定时 AI 应主动告知客户「默认用视频原声,如需 TTS 配音把 use_clip_audio 设 false」,让客户选。★图片模型默认香蕉2(Nano Banana 2 = gemini-3.1-flash-image·整剧统一画风):create_drama/update_project_settings 的 image_model 设,不传即默认香蕉2;可选 gemini-3-pro-image(香蕉Pro·更精细·175点)/gemini-3.1-flash-lite-image(香蕉2 Lite·便宜·31点)/doubao-seedream-5-0-260128(Seedream5.0)/gpt-image-2(ChatGPT Image2);generate_frames 可临时覆盖某次。★视频引擎四选一(drama级·AI 建剧时必须主动按剧选型引导并给价差让客户定):【选型决策树】①写实真人剧→seedance-2.5(默认·指令遵循/人脸细节最强·720p 212点/秒),预算敏感可 hailuo-3(约1/3成本70点/秒·强保真编辑·但单镜约6分钟);②风格化/动画/3D卡通剧·空镜·产品镜→wan3.0(约4折84点/秒·最长30秒·最短2秒计费·单镜约2分钟),赶交付用 wan3.0-prime(126点/秒·约1分钟);③★写实真人剧绝不选 wan3.0/prime——WAN 输出侧真人脸审核在 720p+ 一致拒、重试救不回;④★★叙事剧(有对白、讲连贯故事、镜头节奏要稳的)慎选 wan3.0/prime:WAN 会在**单个分镜片内自行换机位硬切**(实测 11/12 镜有镜内跳切,对照 seedance-2.5 仅 1/6、hailuo-3 为 0/5),成片观感是「一个镜头里画面跳来跳去、切太快」;这是厂商指令遵循弱、提示词层拦不住(我方负向约束早已在其中且实测无效),事后只能换引擎重生。WAN 适合镜头本就短平快的风格化/空镜/产品镜;要稳定单镜叙事请选 seedance-2.5 或 hailuo-3。生成后可用 scan_intra_shot_cuts 核查;④b★★对白密集剧慎选 hailuo-3(与上一条的「镜内自剪」是两回事,这条讲**说不说得全台词**):原生音频引擎会念到镜头结束就停、也会自说自话,实测「台词没念完整」占比 hailuo-3 **50%**(26 镜,均为 8-30 原生音频修复之后所生成,故是引擎本身)、seedance-2.5 **23%**(294 镜);wan3.0 该维度**样本不足未测**(26 个样本全在同一修复之前,修复后仅 2 镜)——不要据此认为 WAN 差。客户报「话没说完」时先跑 scan_dialogue_coverage 分族,别默认去加长镜头(实测镜长够的镜里仍有 32% 没念全);⑤★镜长控制(所有引擎通用,WAN 上尤其明显):单镜保持 3~5 秒。镜头越长模型自由发挥空间越大——实测一个 16 秒单镜(邻镜都是 3~5 秒)在片内换了 4 次场景、人物中途消失 4 秒后又从画面边缘长出来,客户看到的就是「凭空多出一个人」。要长表演请拆成多个短镜再靠帧链衔接,别写 15 秒以上的单镜;【分辨率决策】草稿/迭代期:WAN 剧 480p(42点/秒最省)、其余 720p;成片交付:seedance 剧 720p(高清档停售)、hailuo-3 剧 1080p(=2K·112点/秒)、WAN 剧 1080p(168点/秒);hailuo-3 无独立 480p 档(选了也按 768P 计费);create_drama/update_project_settings 的 video_engine/video_resolution 设,★都必须在出视频前定——切换不回溯已生成镜头,同剧混用会画风/身份漂移。★图片生成慢≠失败:每张几十秒~数分钟、整集可能十几分钟,轮询 get_storyboards 看 frame_status——pending=还在生成(耐心等、别重复调 generate_frames 白花钱)、ready=完成、failed=才是真失败。★改某一镜画面 / 换定妆图后要让新图生效,走**单镜重生 generate_shot_frame**(平台自动带该镜身份锚·场景道具参考·画风锚,保全片一致);generate_frames 只批量补「缺帧」的镜、已有首帧的镜跳过(正常、不是\"拒绝\"),尾帧用 frame_type=last_frame 可批量补。换定妆图(set_character_portrait)后响应里的 stale_frames 就是被旧图污染、需逐镜重生的镜。★绝不用外部工具自制首尾帧再 upload_shot_frame 来\"改画面\"——外部图无身份锚/画风锚,人物·服装·画风必漂,那才是废片根源;upload_shot_frame 只用于客户自有真实素材。③【可选增强·AI 主动提示客户·报价确认才做】美术圣经生成/视觉锁抽取/色彩脚本/动作模板/场景图/场景组/口型/海报/音效/配乐/字幕翻译——这些提升一致性/质量、大多收费。★AI 应主动告知客户这些可做并给报价,客户确认才跑;既不默默跳过、也不擅自扣费。★两条锁定纪律:①**画幅比例**在 create_drama 即定、drama 级锁定,之后所有出图/出视频/成片都用它、**别中途改**(改了已生成内容画幅会不一致、漂移);不设默认 9:16。②**拆镜每镜 5-7 秒是对 AI 出视频优化的正常时长**,别因「镜偏长」误判就重拆——generate_storyboards 会**替换整集所有分镜**、已出图白费,已有分镜后端会拦、需 confirm_replace。★改写保真(默认 auto 智能路由):set_script 的原稿**本身已是剧本形态**(场景头/对白行结构)时,rewrite_script 自动走两步保真——客户台词逐句由机器闸锁定(丢一句即内部拒收重做)、AI 绝不加戏;剧作缺口(钩子/情感锚点)不自动补,写进 get_script 返回的 dramaturgy_suggestions 由客户决定采纳。原稿是小说/大纲则自动走创作型改写(AI 铺钩子造情感点),两种客户各得其所、无需手动切换。要覆盖默认用 update_project_settings 的 rewrite_pipeline(auto/two_pass/single_forced)与 fidelity_enforce(1=保真硬闸)。客户说「AI 把我的剧本改偏了」时的处置:①确认完整原稿已进 set_script;②rewrite_pipeline 设 two_pass 强制保真后重跑 rewrite_script;③客户确认角色外观后用 update_character 的 profile_locked=1 锁定档案,防后续提取覆盖外貌导致定妆图换脸。★客户想在**别的 AI 平台**改写剧本(常见诉求:第三方模型评估我方改写\"改动太大\",客户想自己掌控改动幅度):先调 get_script_format_spec 拿平台认可的格式契约(markdown 范本 + 可直接转发给外部模型的 external_prompt + 空白骨架),把 external_prompt+范本+客户原稿一起交给那个平台;拿回整理稿后**先调 check_script_format 自查**(免费·纯规则·不调模型),errors 清零后有两条出口:【A】adopt_external_script 直接落为可拍稿(我方 AI 不介入·秒级·不计费,前提是外部稿含制作层标注);【B】set_script 灌回原稿位 + rewrite_script 走保真两步(外部只做剧情层时选这条,标注由平台补;客户自写的标注在这条路上会被剥掉重写)。★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。★★客户交来的**已经是成品分镜表**(逐镜写了秒数/景别/运镜)时,以上两条都不适用——直接用 import_storyboard_table 建分镜,跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。★两条导入通道都是确定性的——写错了也会原样建进去,所以**先取契约再自检再导**:分镜表走 get_storyboard_table_spec → check_storyboard_table → import_storyboard_table;客户自己的工具/表格能导出结构化数据、或让外部 AI 直接产 JSON 时走 get_bulk_import_spec → check_bulk_import → bulk_import_storyboards(角色+场景+分镜一次建好)。用 get_pipeline_status 查进度(按项目类型返回专属步骤)。",
         "tags": [
           "episodes"
         ],
@@ -4617,6 +4724,73 @@
         }
       }
     },
+    "/episodes/{episode_id}/storyboards/bulk-import": {
+      "post": {
+        "operationId": "bulk_import_storyboards",
+        "summary": "把一份结构化 JSON 一次性建成本集的角色 / 场景 / 分镜(按 name / location+time / storyboard_number 去重更新)",
+        "description": "把一份结构化 JSON 一次性建成本集的角色 / 场景 / 分镜(按 name / location+time / storyboard_number 去重更新)。免费·确定性·不调 AI。★三步走:① get_bulk_import_spec 取契约与成品示例;② check_bulk_import 自检到 errors 清零;③ 再调本工具。★mode=merge(默认)保留未提到的镜;mode=replace 替换本集**全部**分镜(旧镜与已生成图/视频归档可恢复、不会自动重挂)——replace 必须先得到客户明确同意。★image_prompt / video_prompt / frame_visual_contract 在门面被剥掉:prompt 工程由平台生成(缺省按景别+场景+光线+action 拼基础描述,回执 base_prompts_built 是拼了几镜);想更专业用 enhance_shot_prompts。★导入后:语速律会抬高装不下台词的镜(回执 speech_duration_raised / speech_duration_overflow);建议 review_storyboards 再出图。",
+        "tags": [
+          "episodes"
+        ],
+        "parameters": [
+          {
+            "name": "episode_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "payload": {
+                    "type": "object",
+                    "additionalProperties": {},
+                    "description": "通过 check_bulk_import 的载荷对象:{ mode, episode_meta?, characters?, scenes?, storyboards }"
+                  }
+                },
+                "required": [
+                  "payload"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "StarReel envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "description": "Operation result payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient prepaid balance (never overdrafts); response carries `needed` points"
+          }
+        }
+      }
+    },
     "/episodes/{episode_id}/storyboards/complete-motifs": {
       "post": {
         "operationId": "complete_ending_motifs",
@@ -4790,7 +4964,7 @@
       "post": {
         "operationId": "import_storyboard_table",
         "summary": "【已有分镜表时用这个】把客户**做完的分镜表**直接建成分镜，跳过改写与拆镜——中间没有任何 agent",
-        "description": "【已有分镜表时用这个】把客户**做完的分镜表**直接建成分镜，跳过改写与拆镜——中间没有任何 agent。免费。★什么时候用:客户交来的不是剧本而是成品分镜表(逐镜写了秒数/景别/运镜,常见于给电视台/品牌方的样片)。走 set_script→rewrite_script→generate_storyboards 那条路会把这些制作参数当非剧情内容剥掉(生产实测:8 镜 36 秒的表跑完变成 20 镜 109 秒,STYLE 块与数据卡全丢),所以这类客户必须走本工具。★声明格式(每镜一行,字段用 | 或全角 ｜ 分隔):`[镜 001 | 4s | 微距 | 固定]`,也认客户已有的加粗写法 `**镜 001 ｜ 4″ ｜ 微距 ｜ 摄影机固定不动**`(不必让客户重打一遍)。顺序 = 镜号|秒数|景别|运镜|标记;标记 `不切` 表示该镜绝不可再拆、`★` 表示关键镜;运镜的「横移」映射 tracking、「摇」映射 pan(两者在反光面上的倒影行为不同,别混)。`[字卡 9s] 行一 | 行二` 会建成卡镜(成片层直接渲黑底卡,不出图不出视频)。★不传 content 时读本集「原始内容」。没有任何逐镜声明会被 400 拒(那是剧本不是分镜表,请走正常拆镜)。★本集已有分镜时返回 409 并告知镜数,确认要替换再带 confirm_replace:true(旧镜转已删除状态、可恢复)。秒数/景别缺失的镜照常导入但会在 issues 里列出——系统不替客户猜,猜错一个秒数就是成片时长错。",
+        "description": "【已有分镜表时用这个】把客户**做完的分镜表**直接建成分镜，跳过改写与拆镜——中间没有任何 agent。免费。★三步走，别直接导：① get_storyboard_table_spec 取范本（景别/运镜白名单、正文落点、字卡语法、外部 AI 提示词）；② check_storyboard_table 自检到 errors 清零、逐条看 warnings（缺秒数/景别没认出/没画面叙述都会原样建进去）；③ 再调本工具。★什么时候用:客户交来的不是剧本而是成品分镜表(逐镜写了秒数/景别/运镜,常见于给电视台/品牌方的样片)。走 set_script→rewrite_script→generate_storyboards 那条路会把这些制作参数当非剧情内容剥掉(生产实测:8 镜 36 秒的表跑完变成 20 镜 109 秒,STYLE 块与数据卡全丢),所以这类客户必须走本工具。★声明格式(每镜一行,字段用 | 或全角 ｜ 分隔):`[镜 001 | 4s | 微距 | 固定]`,也认客户已有的加粗写法 `**镜 001 ｜ 4″ ｜ 微距 ｜ 摄影机固定不动**`(不必让客户重打一遍)。顺序 = 镜号|秒数|景别|运镜|标记;标记 `不切` 表示该镜绝不可再拆、`★` 表示关键镜;运镜的「横移」映射 tracking、「摇」映射 pan(两者在反光面上的倒影行为不同,别混)。`[字卡 9s] 行一 | 行二` 会建成卡镜(成片层直接渲黑底卡,不出图不出视频)。★不传 content 时读本集「原始内容」。没有任何逐镜声明会被 400 拒(那是剧本不是分镜表,请走正常拆镜)。★本集已有分镜时返回 409 并告知镜数,确认要替换再带 confirm_replace:true(旧镜转已删除状态、可恢复)。秒数/景别缺失的镜照常导入但会在 issues 里列出——系统不替客户猜,猜错一个秒数就是成片时长错。",
         "tags": [
           "episodes"
         ],
@@ -5758,6 +5932,117 @@
         "description": "取本平台**认可的剧本格式契约**:markdown 范本全文 + external_prompt(可整段转发给任意外部 AI 的任务提示词) + skeleton(带 〈…〉 占位的模板) + filled_example(填好的成品对照)。免费·静态·不扣费。★范本 v2 起把**制作层标注**全写进去了([角色档案] 六段格式/[外貌] 行首标记/[道具]/[SFX][BGM][VFX]/motif/场景头第四段光线/文末元信息)——v1 只写剧情层,外部 AI 因此产不出完整稿、反复过不了自检。转发时**务必把 filled_example 一起给**:LLM 的格式正确率靠可模仿的完整样例,不靠规则条文。★什么时候用:客户想自己掌控改写幅度、要拿到别的 AI 平台去改写、或反馈\"你们的 AI 把我的剧本改动太大\"时。★两条出口(先问客户要哪条,这决定外部 AI 要不要写标注):【A 直接采用】外部 AI 产出**含制作层标注**的完整稿 → check_script_format 全绿 → adopt_external_script 直接落为可拍稿,我方 AI 完全不介入、秒级、不计费,客户写的 [角色档案] 原样生效。适合已经把外部 AI 调顺、要求零改动的客户。【B 送 AI 改写】外部 AI 只产出剧情层(**不要写任何标注**) → set_script 灌回原稿位 → rewrite_script 走保真两步补标注。★B 路径下客户自己写的标注**会被 G1 剥掉重写**,等于白写——所以选 B 就要明确告诉外部 AI 别写标注。★怎么用(三步):① 本工具取 external_prompt + filled_example + markdown,连同客户原稿一起交给那个平台;② 拿回整理稿先用 check_script_format 自查,errors 清零;③ 按出口 A 调 adopt_external_script,或按出口 B 调 set_script + rewrite_script。★契约内容含:场景头三段格式/地点命名律/环境首句三要素/角色首次出场外貌行/声音行前缀/单行台词长度/禁写运镜与片尾标记,以及\"台词逐句保留·人物不许丢·动作节拍不许丢·不许加戏\"四条保真要求(已写进 external_prompt)。",
         "tags": [
           "script-format"
+        ],
+        "parameters": [
+          {
+            "name": "drama_title",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "episode_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "StarReel envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "description": "Operation result payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient prepaid balance (never overdrafts); response carries `needed` points"
+          }
+        }
+      }
+    },
+    "/storyboard-table/lint": {
+      "post": {
+        "operationId": "check_storyboard_table",
+        "summary": "**导入前的分镜表自检**:用导入端点**同一个解析器**跑一遍,返回 errors / warnings / stats / shots(逐镜解析预览:每一镜会变成什么秒数·景别·运镜·标记·正文字数)",
+        "description": "**导入前的分镜表自检**:用导入端点**同一个解析器**跑一遍,返回 errors / warnings / stats / shots(逐镜解析预览:每一镜会变成什么秒数·景别·运镜·标记·正文字数)。免费·纯规则·不调模型·不落库·可反复跑。★errors = 导入会 400 的(空 / 没有任何逐镜声明=这不是分镜表)+ 残留 〈…〉 占位符;必须清零。★warnings = 导入照常但结果会缺东西的:缺秒数(按 4 秒建)/景别没认出(留空)/运镜没认出(留空)/声明后没画面叙述(出不了图的死镜)/没有场景头(绑不上场景)/数据卡没用字卡语法(不进成片)/单镜>15 秒/STYLE 块/镜号重复——把 message 清单原样发回外部 AI 让它只修这些点。★这里绿了,import_storyboard_table 就不会有 issues(同一份代码)。",
+        "tags": [
+          "storyboard-table"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "分镜表全文(一次一集,上限 6 万字)"
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "StarReel envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "description": "Operation result payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient prepaid balance (never overdrafts); response carries `needed` points"
+          }
+        }
+      }
+    },
+    "/storyboard-table/spec": {
+      "get": {
+        "operationId": "get_storyboard_table_spec",
+        "summary": "取本平台**认可的分镜表格式契约**：markdown 范本全文 + external_prompt(可整段转发给任意外部 AI 的任务提示词) + skeleton(〈…〉占位骨架) + filled_example(成品对照) + ch",
+        "description": "取本平台**认可的分镜表格式契约**：markdown 范本全文 + external_prompt(可整段转发给任意外部 AI 的任务提示词) + skeleton(〈…〉占位骨架) + filled_example(成品对照) + checklist + shot_types(景别白名单) + movements(运镜白名单与认得的中文写法)。免费·静态·不扣费。★什么时候用:客户手上是成品分镜表(逐镜秒数/景别/运镜)、或想让外部 AI/自己的工具把镜头设计整理成我们认的格式时——**在 import_storyboard_table 之前**先调它。★契约要点:一镜一行 `[镜 001 | 4s | 特写 | 固定]`(加粗式/全角竖线/繁体也认);景别与运镜只认白名单里的词(写别的会留空);声明之后的正文=画面叙述(至少一行,否则出不了图)+ `角色名：台词` + [SFX:]/[BGM:]/[VFX:] 标注;整屏文字用 `[字卡 9s] 行一 | 行二`;STYLE/NEG 全片风格块**不写进表**(写进项目设定);`## 非场景标题` 会结束当前镜。转发给外部 AI 时**务必把 filled_example 一起给**:格式正确率靠可模仿的完整样例。",
+        "tags": [
+          "storyboard-table"
         ],
         "parameters": [
           {

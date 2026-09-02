@@ -67,9 +67,25 @@ export const ENTRY_POINTS: EntryPoint[] = [
   },
   {
     customer_has: '做完的成品分镜表(逐镜写了秒数 / 景别 / 运镜;常见于样片、交给电视台或品牌方的表)',
-    use: ['import_storyboard_table(不传 content 则读本集原始内容;本集已有分镜要 confirm_replace:true)'],
+    use: [
+      'get_storyboard_table_spec(先取契约:景别/运镜白名单、正文落点、字卡语法、给外部 AI 的提示词与成品示例)',
+      'check_storyboard_table(导入前自检:与导入同一个解析器,errors 清零、warnings 逐条看——缺秒数/景别没认出/没画面叙述都会原样建进去)',
+      'import_storyboard_table(不传 content 则读本集原始内容;本集已有分镜要 confirm_replace:true)',
+    ],
     avoid: '绝不走 set_script→rewrite_script→generate_storyboards:改写会把秒数/景别/运镜/STYLE/字卡当非剧情内容剥掉(生产实测 8 镜 36 秒被拆成 20 镜 109 秒)。',
-    note: '导入后分镜还没有出图/视频提示词,先 `autofill_storyboards` 再出图;`[字卡 9s] 行一 | 行二` 会建成卡镜(成片层直接渲,不出图不出视频)。',
+    note: '导入后分镜有基础出图提示词(平台确定性拼装),想更专业再 `enhance_shot_prompts`;beat/潜台词等要理解的字段用 `autofill_storyboards`;`[字卡 9s] 行一 | 行二` 会建成卡镜(成片层直接渲,不出图不出视频)。',
+    free: true,
+    flow: 'get_storyboard_table_spec → 外部工具按范本整理 → check_storyboard_table(errors 清零) → import_storyboard_table',
+  },
+  {
+    customer_has: '结构化数据(客户自己的工具 / 表格导出 / 第三方 AI 直接产 JSON,想一次建好角色+场景+分镜)',
+    use: [
+      'get_bulk_import_spec(契约 + 模板 + 成品示例 + 枚举与上限,与校验器同源)',
+      'check_bulk_import(同一份 zod 校验;引用不到的角色/场景、死镜、台词里的舞台指示都会报出来)',
+      'bulk_import_storyboards(mode=merge 更新/保留,replace 替换全部需客户明确同意;prompt 字段由平台生成)',
+    ],
+    avoid: '别把 JSON 转成文本再走 import_storyboard_table,也别一条条 update_shot 手建——结构化数据就走结构化通道。',
+    note: '通过 MCP 导入时 image_prompt/video_prompt/frame_visual_contract 会被忽略,平台按景别+场景+光线+action 拼基础描述(回执 base_prompts_built)。',
     free: true,
   },
   {
@@ -165,7 +181,7 @@ export const PIPELINE: PipelineStep[] = [
   },
   {
     step: '2 灌本',
-    tools: ['set_script', 'import_storyboard_table(直通道:已有分镜表)', 'adopt_external_script(直通道:外部按范本产出的稿)'],
+    tools: ['set_script', 'import_storyboard_table(直通道:已有分镜表;先 get_storyboard_table_spec + check_storyboard_table)', 'bulk_import_storyboards(直通道:结构化 JSON;先 get_bulk_import_spec + check_bulk_import)', 'adopt_external_script(直通道:外部按范本产出的稿)'],
     billing: '免费',
   },
   {
@@ -273,6 +289,7 @@ export const BILLING = {
     '所有 get_* / list_* / scan_* / review_* / check_* / recommend_* / get_capabilities_guide',
     'compose_episode / rerender_episode / render_multi_aspect / generate_sfx / generate_effects / generate_transitions',
     'import_storyboard_table / adopt_external_script / get_script_format_spec / check_script_format',
+    'get_storyboard_table_spec / check_storyboard_table / get_bulk_import_spec / check_bulk_import / bulk_import_storyboards',
     'update_* / edit_rewritten_script / split_shot / trim_shot / set_character_portrait / upload_*',
   ],
   tools: ['get_budget_status', 'get_cost_estimate'],
@@ -282,7 +299,8 @@ export interface CommonRequest { customer_says: string; do: string }
 export const COMMON_REQUESTS: CommonRequest[] = [
   { customer_says: '你们能做什么 / 我该从哪开始', do: '先问客户手上有什么材料,对照 entry_points 选通道;建剧前 `list_project_options` 把项目类型/画幅/分辨率/引擎给客户挑。' },
   { customer_says: 'AI 把我的剧本改偏了 / 改动太大', do: '① 确认完整原稿已进 `set_script`;② `update_project_settings` 设 rewrite_pipeline=two_pass 后重跑 `rewrite_script`;③ 客户确认外观后 `update_character` profile_locked=1。客户想自己掌控 → 走格式范本三步(`get_script_format_spec` → 外部改 → `check_script_format`)。' },
-  { customer_says: '我有分镜表了,直接出片', do: '`import_storyboard_table`,不要走改写;导入后 `autofill_storyboards` 补提示词再 `review_storyboards`。' },
+  { customer_says: '我有分镜表了,直接出片', do: '先 `get_storyboard_table_spec` 把契约给客户/外部工具,`check_storyboard_table` 自检全绿再 `import_storyboard_table`,不要走改写;导入后 `review_storyboards` 再出图。' },
+  { customer_says: '我的工具能导出表格 / 我想让别的 AI 直接生成结构化数据', do: '`get_bulk_import_spec`(契约 + 模板 + 成品示例给对方)→ `check_bulk_import`(errors 清零)→ `bulk_import_storyboards`;replace 模式先取得客户同意。' },
   { customer_says: '换了定妆图 / 换脸后镜头没变', do: '`set_character_portrait` 响应里的 stale_frames 逐镜 `generate_shot_frame`,再重生视频。' },
   { customer_says: '图片一直没出来', do: '`get_storyboards` 看 frame_status:pending=在生成(每张几十秒到数分钟、整集十几分钟),别重复调 `generate_frames`;failed 才是失败,读 fail_reason / fail_hint。' },
   { customer_says: '预算多少 / 怎么更便宜', do: '各步 quote_* + `get_cost_estimate`;降本:hailuo-3(约 1/3)或 wan3.0(约 4 折,仅风格化/空镜/产品镜,写实真人绝不选)+ 草稿期低分辨率。' },

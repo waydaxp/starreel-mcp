@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 import { registerProduceTools } from '../src/tools/produce.js'
+import { registerGuideTools } from '../src/tools/guide.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
@@ -123,6 +124,7 @@ function inferFromValue(v: unknown): Record<string, unknown> {
 
 // ---------- 5. 逐工具执行 ----------
 registerProduceTools(fakeServer as any, fakeClient)
+registerGuideTools(fakeServer as any)   // 本地功能地图工具:没有 REST 对应面,按设计落进 x-unmapped-tools(不静默漏掉)
 
 const ENVELOPE = {
   description: 'StarReel envelope',

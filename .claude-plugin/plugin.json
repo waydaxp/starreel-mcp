@@ -1,6 +1,6 @@
 {
   "name": "starreel",
-  "description": "Turn a script into a finished short-drama episode: bundles the StarReel MCP server (80+ tools, quote-before-spend billing) and the drama-production operating skill. Set STARREEL_API_KEY before use.",
+  "description": "Turn a script into a finished short-drama episode: bundles the StarReel MCP server (120+ tools, quote-before-spend billing) and the drama-production operating skill. Set STARREEL_API_KEY before use.",
   "author": {
     "name": "StarReel",
     "url": "https://starreel.ai"
@@ -16,5 +16,5 @@
     "storyboard"
   ],
   "mcpServers": "./.mcp.json",
-  "version": "0.1.53"
+  "version": "0.1.54"
 }

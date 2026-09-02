@@ -8,7 +8,7 @@
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
 **StarReel** is a prepaid AI video-production pipeline. This MCP server exposes the
-whole factory — **80+ tools** covering every stage — so an AI agent can take a raw
+whole factory — **120+ tools** covering every stage — so an AI agent can take a raw
 script all the way to a finished `.mp4`:
 
 ```
@@ -120,8 +120,10 @@ See the [API docs](https://api.shortreelai.com/docs/mcp).
 
 | Stage | Tools (selection) |
 |---|---|
+| Orientation | `get_capabilities_guide` (free, local) — which entry point for which material, pipeline order, gates, billing |
 | Project setup | `create_drama` · `update_project_settings` · `list_project_options` |
 | Script | `set_script` · AI rewrite · `edit_rewritten_script` |
+| Bring your own material | `get_script_format_spec` · `check_script_format` · `adopt_external_script` (rewrite on any AI, then adopt verbatim) · `import_storyboard_table` (a finished shot list skips rewrite + breakdown) · `upload_*` (own portraits / scene / prop / shot images) |
 | Cast & world | asset extraction · `update_character` · `generate_world_concept` · `generate_art_bible` |
 | Identity anchors | `generate_portraits_and_sheets` (portraits + character sheets = the consistency anchor) |
 | Storyboards | `quote_storyboards` → `generate_storyboards` → `get_storyboards` |
@@ -149,6 +151,9 @@ Project types: `drama` / `ad` / `mv` / `brand_film`.
 
 [`SKILL.md`](./SKILL.md) ships inside the package — a platform-agnostic operating
 manual (full pipeline order + ten operating disciplines + a failure playbook).
+The server also announces the same guidance at connect time (MCP `instructions`)
+and exposes it as a tool, `get_capabilities_guide`, so an agent that has never
+seen this file still learns which entry point each kind of material takes.
 Skill-aware clients load it automatically; on platforms that can't run `npx`
 (Coze / Dify / GPTs / custom agents) paste it into the system prompt and drive
 the same pipeline over REST (`/v1/produce/*`).

@@ -4,7 +4,8 @@ description: >-
   Operating skill for any AI agent driving the StarReel short-drama production
   pipeline (script → rewrite → extract → portraits + sheets → storyboards → frames →
   video → voiceover → final cut) over MCP or REST. Covers the ordered workflow,
-  the eleven operating disciplines (prepaid billing, quote-before-spend, retryable
+  the entry-point decision table (which channel each kind of customer material
+  takes), the eleven operating disciplines (prepaid billing, quote-before-spend, retryable
   failure handling, content compliance, tenancy), and a failure playbook.
 license: MIT
 homepage: https://api.shortreelai.com/docs/mcp
@@ -53,6 +54,29 @@ style/color/motion locks, MV story/script, subtitle translation). Only the
 big-ticket image/video stages (portraits, storyboards, frames, videos,
 scene-images) carry a `quote_*`; the other metered steps have no quote and bill
 by usage — 402 mid-run if the balance can't cover them (never overdraft).
+
+## Which entry point? — match the customer's material first
+
+The most common agent mistake is not a wrong parameter but a wrong **entry
+point**: everything gets pushed through `set_script → rewrite_script`, even
+material that has its own channel. Decide this before calling anything. The
+server ships the same table as `get_capabilities_guide` (free, local, no
+network — call it whenever you are unsure what the platform can do) and
+announces a condensed version as MCP `instructions` at connect time.
+
+| The customer has | Use | Never |
+|---|---|---|
+| A novel / outline / synopsis (not yet a screenplay) | `set_script` → `rewrite_script` (creative rewrite builds hooks and beats) → `review_script` | — |
+| A finished screenplay (scene headers + dialogue lines) | `set_script` → `rewrite_script` (auto two-pass fidelity: dialogue byte-locked) → `review_script`; force with `rewrite_pipeline: "two_pass"`, `fidelity_enforce: 1` | pasting it into `edit_rewritten_script` (400) |
+| Wants to rewrite on another AI / says our rewrite "changed too much" | `get_script_format_spec` → external rewrite → `check_script_format` → `adopt_external_script` (exit A) or `set_script` + `rewrite_script` (exit B) | skipping the check; `edit_rewritten_script` |
+| A finished **shot list** (per-shot seconds / shot size / camera move) | `import_storyboard_table` → `autofill_storyboards` → `review_storyboards` | `rewrite_script` + `generate_storyboards` — strips every production parameter (measured: 8 shots / 36 s became 20 shots / 109 s) |
+| Their own portraits / scene / prop / shot images | `upload_image` · `set_character_portrait` · `upload_scene_image` · `upload_prop_sheet` · `upload_shot_frame` | rendering a "fix" elsewhere and uploading it — use `generate_shot_frame` |
+| A voice sample / a required voice | `clone_voice` → `speak_with_voice` → `set_character_voice` / `assign_voices` | cloning without the rights-holder's consent |
+| A song + lyrics | `create_drama` (`project_type: "mv"`) → `set_mv_lyrics` → `generate_mv_story` → `generate_mv_script` | `rewrite_script` (blocked for MV) |
+| A product / brand | `create_drama` (`project_type: "ad"` or `"brand_film"`) → `add_product` → `generate_product_sheet` | writing brand copy as dialogue (it gets spoken) |
+| Generated shots / a cut that needs changes | `scan_dialogue_coverage` / `scan_intra_shot_cuts` first, then `update_shot` · `replace_shot_dialogue` · `repair_episode_dialogue` · `split_shot` · `trim_shot` · `regenerate_shot_video` · `edit_video_shot` → `rerender_episode` | re-composing to fix what a clip *says* |
+| Wants to assemble the cut themselves | `export_handoff_pack` → `get_handoff_toolchain` | `compose_episode` (pick one) |
+| A multi-language release | `translate_subtitles` · `subtitle_secondary_lang` in project settings | — |
 
 ## Execution tiers — when to just do it vs. when to ask
 
@@ -530,13 +554,17 @@ to close") tells the vendor to fit that entire sequence into each 3-second shot.
 
 ## Quick tool reference
 
+- **Orientation (free, local)**: `get_capabilities_guide` — entry points by
+  material, the 10-step pipeline with billing, the review gates, QA tools by
+  symptom, and common customer requests
 - **Discover / create**: `list_project_options`, `create_drama`,
   `update_project_settings`
 - **Script**: `set_script`, `rewrite_script`, `get_script`,
   `edit_rewritten_script`, `extract_assets`,
   `get_script_format_spec` + `check_script_format` + `adopt_external_script`
   (free — the format contract to hand an external AI, the pre-paste self-check,
-  and the "adopt it verbatim" exit)
+  and the "adopt it verbatim" exit), `import_storyboard_table` (free — a
+  finished shot list becomes shots directly, skipping rewrite and breakdown)
 - **Identity & consistency**: `generate_character_portraits`, `upload_image`,
   `set_character_portrait`, `generate_character_sheet`, `extract_visual_lock`
 - **Shots → video**: `quote/generate_storyboards`, `get_storyboards`,

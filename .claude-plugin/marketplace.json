@@ -11,7 +11,7 @@
         "source": "github",
         "repo": "waydaxp/starreel-mcp"
       },
-      "description": "StarReel MCP server (80+ production tools) + the drama-production agent skill. Requires STARREEL_API_KEY.",
+      "description": "StarReel MCP server (120+ production tools) + the drama-production agent skill. Requires STARREEL_API_KEY.",
       "homepage": "https://starreel.ai",
       "license": "MIT",
       "keywords": [

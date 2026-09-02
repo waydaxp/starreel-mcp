@@ -148,6 +148,8 @@ const WORKFLOW_HINT =
   'errors 清零后有两条出口:【A】adopt_external_script 直接落为可拍稿(我方 AI 不介入·秒级·不计费,前提是外部稿含制作层标注);'+
   '【B】set_script 灌回原稿位 + rewrite_script 走保真两步(外部只做剧情层时选这条,标注由平台补;客户自写的标注在这条路上会被剥掉重写)。'+
   '★别把外部整理稿塞进 edit_rewritten_script(未跑过改写会被 400 拒),也别跳过 check_script_format 直接灌——格式不合规的稿子进来照样被闸拦,白跑一轮。' +
+  '★★客户交来的**已经是成品分镜表**(逐镜写了秒数/景别/运镜)时,以上两条都不适用——直接用 import_storyboard_table 建分镜,'+
+  '跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。' +
   '用 get_pipeline_status 查进度(按项目类型返回专属步骤)。'
 
 const ETHNICITY_CODES = [
@@ -384,6 +386,29 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     async ({ content }) => jsonResult(await client.producePost('/script-format/lint', { content })),
   )
 
+  server.tool(
+    'import_storyboard_table',
+    '【已有分镜表时用这个】把客户**做完的分镜表**直接建成分镜，跳过改写与拆镜——中间没有任何 agent。免费。' +
+      '★什么时候用:客户交来的不是剧本而是成品分镜表(逐镜写了秒数/景别/运镜,常见于给电视台/品牌方的样片)。' +
+      '走 set_script→rewrite_script→generate_storyboards 那条路会把这些制作参数当非剧情内容剥掉' +
+      '(生产实测:8 镜 36 秒的表跑完变成 20 镜 109 秒,STYLE 块与数据卡全丢),所以这类客户必须走本工具。' +
+      '★声明格式(每镜一行,字段用 | 或全角 ｜ 分隔):`[镜 001 | 4s | 微距 | 固定]`,' +
+      '也认客户已有的加粗写法 `**镜 001 ｜ 4″ ｜ 微距 ｜ 摄影机固定不动**`(不必让客户重打一遍)。' +
+      '顺序 = 镜号|秒数|景别|运镜|标记;标记 `不切` 表示该镜绝不可再拆、`★` 表示关键镜;' +
+      '运镜的「横移」映射 tracking、「摇」映射 pan(两者在反光面上的倒影行为不同,别混)。' +
+      '`[字卡 9s] 行一 | 行二` 会建成卡镜(成片层直接渲黑底卡,不出图不出视频)。' +
+      '★不传 content 时读本集「原始内容」。没有任何逐镜声明会被 400 拒(那是剧本不是分镜表,请走正常拆镜)。' +
+      '★本集已有分镜时返回 409 并告知镜数,确认要替换再带 confirm_replace:true(旧镜转已删除状态、可恢复)。' +
+      '秒数/景别缺失的镜照常导入但会在 issues 里列出——系统不替客户猜,猜错一个秒数就是成片时长错。',
+    {
+      episode_id: z.number().int().positive(),
+      content: z.string().optional().describe('分镜表全文;不传则用本集「原始内容」'),
+      confirm_replace: z.boolean().optional().describe('本集已有分镜时必须显式传 true 才替换'),
+    },
+    async ({ episode_id, content, confirm_replace }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/storyboards/import`,
+        { ...(content ? { content } : {}), ...(confirm_replace ? { confirm_replace } : {}) })),
+  )
   server.tool(
     'adopt_external_script',
     '【出口 A】把外部 AI 按范本产出的稿子**直接采用为可拍稿**,我方 AI 完全不介入。秒级、不计费。' +

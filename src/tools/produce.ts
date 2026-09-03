@@ -457,7 +457,7 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       '★与 import_storyboard_table(文本一镜一行)的分工:数据本来就是结构化的走 JSON;客户手上是文本分镜表走那条。' +
       '★契约要点:顶层 { mode, episode_meta?, characters?[], scenes?[], storyboards[] };characters 按 name 去重、scenes 按 location+time 去重、storyboards 按 storyboard_number 去重;' +
       'bound_characters 引用 characters[].name(或本剧已有角色名)、scene_ref 引用 scenes[] 的 location+time——引用不到会**静默跳过**;每镜 action/description 至少一个;dialogue 是 `说话人：台词`、别写舞台指示(会被念出来);' +
-      'image_prompt/video_prompt 可不填(平台拼基础描述),**通过 MCP 导入时这两个字段与 frame_visual_contract 会被忽略**(prompt 工程由平台生成)。',
+      'image_prompt/video_prompt 可不填(没填的镜由平台按景别+场景+光线+action 拼基础描述);填了就**逐字照用**,平台不覆盖。frame_visual_contract 是内部帧契约,导入时忽略。',
     {},
     async () => jsonResult(await client.produceGet('/bulk-import/spec')),
   )
@@ -475,7 +475,8 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     '把一份结构化 JSON 一次性建成本集的角色 / 场景 / 分镜(按 name / location+time / storyboard_number 去重更新)。免费·确定性·不调 AI。' +
       '★三步走:① get_bulk_import_spec 取契约与成品示例;② check_bulk_import 自检到 errors 清零;③ 再调本工具。' +
       '★mode=merge(默认)保留未提到的镜;mode=replace 替换本集**全部**分镜(旧镜与已生成图/视频归档可恢复、不会自动重挂)——replace 必须先得到客户明确同意。' +
-      '★image_prompt / video_prompt / frame_visual_contract 在门面被剥掉:prompt 工程由平台生成(缺省按景别+场景+光线+action 拼基础描述,回执 base_prompts_built 是拼了几镜);想更专业用 enhance_shot_prompts。' +
+      '★image_prompt / video_prompt 想自己写就直接写在每镜里,**逐字照用不被覆盖**;没填的镜平台拼基础描述(回执 base_prompts_built 是拼了几镜),导入后可用 get_shot_prompts 读、update_shot 改。' +
+      '(frame_visual_contract 是内部帧契约,导入时忽略。)' +
       '★导入后:语速律会抬高装不下台词的镜(回执 speech_duration_raised / speech_duration_overflow)。' +
       '★导入后**默认自动补全**(auto_complete,跟随剧目「自动补齐辅助资产」开关、默认开):同一后台批次给全镜 AI 填空专业字段(只填空),' +
       '并只给**没填 image_prompt、由平台拼了基础描述**的镜扩写完整出图/视频提示词(客户自己写的绝不覆盖;回执 auto_complete.prompt_shots)。' +
@@ -1171,7 +1172,9 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       '改文本不会自动重出图/视频,如需让画面跟上文本改动,改完再 regen 对应镜。用 get_storyboards 查改后结果。' +
       '★★原声镜(厂商原生音频)改 dialogue 后,本镜视频会被标记「待重生」——因为台词是**烤进视频人声**的,' +
       '不重生就终拼,成片里念的仍是改动前的台词(典型现象:台词像是跑到了别的镜头上)。' +
-      'compose_episode 会以 advisory `stale_video_after_edit` 列出这些镜;正确处置是先 regenerate_shot_video 再终拼。',
+      'compose_episode 会以 advisory `stale_video_after_edit` 列出这些镜;正确处置是先 regenerate_shot_video 再终拼。' +
+      '★也可直接改本镜的两条提示词正文(image_prompt/video_prompt):改前先用 get_shot_prompts 读现值,' +
+      '别凭空覆盖——正文里的 @char:N / @scene:M 是角色/场景参考图的引用标记,删掉本镜就不注入对应定妆图/场景图(形象漂移)。',
     {
       storyboard_id: z.number().int().positive(),
       character_ids: z.array(z.number().int().positive()).optional()
@@ -1188,11 +1191,24 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       atmosphere: z.string().optional().describe('氛围'),
       director_note: z.string().optional().describe('导演注释'),
       shot_intent: z.string().optional().describe('这镜为什么存在(叙事意图)'),
+      image_prompt: z.string().optional().describe('首帧画面提示词**正文**(全量覆盖本镜现值)。★先 get_shot_prompts 读现值再改;★原样保留其中的 @char:N / @scene:M 引用标记,删了就不注入对应定妆图/场景图。出图时平台会在正文之上再拼身份锚与一致性约束,不必你写'),
+      video_prompt: z.string().optional().describe('视频(动态/运镜/表演)提示词**正文**(全量覆盖本镜现值)。★同 image_prompt:先读现值、保留 @char/@scene 标记'),
     },
     async ({ storyboard_id, ...fields }) => {
       const payload = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined))
       return jsonResult(await client.producePut(`/storyboards/${storyboard_id}`, payload))
     },
+  )
+  server.tool(
+    'get_shot_prompts',
+    '读某一镜的两条提示词**正文**(image_prompt=首帧画面 / video_prompt=动态表演),供直接微调后用 update_shot 写回。免费。' +
+      '★逐镜按需:改哪镜读哪镜(整集列表 get_storyboards 是纯进度视图,不含提示词)。' +
+      '★返回的 asset_tokens 是正文里的角色/场景参考图引用标记(@char:N / @scene:M)——改写时原样保留,' +
+      '删掉本镜就不注入对应定妆图/场景图,画面会漂。' +
+      '★这是分镜表里的正文层;出图/出视频时平台还会在其上拼身份锚、一致性约束与参考图指令(不在此处,也无需你写)。' +
+      '改完提示词不会自动重出图/视频,要让画面跟上得再 regen 对应镜。',
+    { storyboard_id: z.number().int().positive() },
+    async ({ storyboard_id }) => jsonResult(await client.produceGet(`/storyboards/${storyboard_id}/prompts`)),
   )
   server.tool(
     'rerender_episode',

@@ -70,12 +70,12 @@ announces a condensed version as MCP `instructions` at connect time.
 | A finished screenplay (scene headers + dialogue lines) | `set_script` → `rewrite_script` (auto two-pass fidelity: dialogue byte-locked) → `review_script`; force with `rewrite_pipeline: "two_pass"`, `fidelity_enforce: 1` | pasting it into `edit_rewritten_script` (400) |
 | Wants to rewrite on another AI / says our rewrite "changed too much" | `get_script_format_spec` → external rewrite → `check_script_format` → `adopt_external_script` (exit A) or `set_script` + `rewrite_script` (exit B) | skipping the check; `edit_rewritten_script` |
 | A finished **shot list** (per-shot seconds / shot size / camera move) | `get_storyboard_table_spec` (the contract: shot-size / camera-move vocabulary, body layout, text-card syntax, a prompt for the external AI) → `check_storyboard_table` (same parser as the import; clear `errors`, read every `warning` — a missing duration, an unrecognised shot size or an empty body all get imported as-is) → `import_storyboard_table` (defaults to `auto_complete`: one background batch fills the professional fields and expands every shot's platform-built base description into full image / video prompts — metered text, tell the customer first; `auto_complete: false` imports only) → `get_autofill_status` until `done` → `review_storyboards` | `rewrite_script` + `generate_storyboards` — strips every production parameter (measured: 8 shots / 36 s became 20 shots / 109 s); importing without the check; reviewing before the completion batch finishes (the token expires when shots change) |
-| **Structured data** — their own tool / spreadsheet export, or an external AI producing JSON (cast + scenes + shots in one go) | `get_bulk_import_spec` (contract + template + worked example + enums, same source as the validator) → `check_bulk_import` (same zod schema; unresolved character / scene references, dead shots and stage directions inside dialogue are surfaced) → `bulk_import_storyboards` (`mode: "replace"` only with the customer's explicit OK; defaults to `auto_complete`: professional fields for every shot, full image / video prompts only for shots that had no `image_prompt` — metered text, tell the customer first) → `get_autofill_status` until `done` → `review_storyboards` | converting the JSON to text for `import_storyboard_table`; hand-building shots with `update_shot`; sending `image_prompt` / `video_prompt` (ignored — the platform builds them); reviewing before the completion batch finishes |
+| **Structured data** — their own tool / spreadsheet export, or an external AI producing JSON (cast + scenes + shots in one go) | `get_bulk_import_spec` (contract + template + worked example + enums, same source as the validator) → `check_bulk_import` (same zod schema; unresolved character / scene references, dead shots and stage directions inside dialogue are surfaced) → `bulk_import_storyboards` (`mode: "replace"` only with the customer's explicit OK; defaults to `auto_complete`: professional fields for every shot, full image / video prompts only for shots that had no `image_prompt` — prompts you supply yourself are kept verbatim — metered text, tell the customer first) → `get_autofill_status` until `done` → `review_storyboards` | converting the JSON to text for `import_storyboard_table`; hand-building shots with `update_shot`; reviewing before the completion batch finishes |
 | Their own portraits / scene / prop / shot images | `upload_image` · `set_character_portrait` · `upload_scene_image` · `upload_prop_sheet` · `upload_shot_frame` | rendering a "fix" elsewhere and uploading it — use `generate_shot_frame` |
 | A voice sample / a required voice | `clone_voice` → `speak_with_voice` → `set_character_voice` / `assign_voices` | cloning without the rights-holder's consent |
 | A song + lyrics | `create_drama` (`project_type: "mv"`) → `set_mv_lyrics` → `generate_mv_story` → `generate_mv_script` | `rewrite_script` (blocked for MV) |
 | A product / brand | `create_drama` (`project_type: "ad"` or `"brand_film"`) → `add_product` → `generate_product_sheet` | writing brand copy as dialogue (it gets spoken) |
-| Generated shots / a cut that needs changes | `scan_dialogue_coverage` / `scan_intra_shot_cuts` first, then `update_shot` · `replace_shot_dialogue` · `repair_episode_dialogue` · `split_shot` · `trim_shot` · `regenerate_shot_video` · `edit_video_shot` → `rerender_episode` | re-composing to fix what a clip *says* |
+| Generated shots / a cut that needs changes | `scan_dialogue_coverage` / `scan_intra_shot_cuts` first, then `get_shot_prompts` · `update_shot` · `replace_shot_dialogue` · `repair_episode_dialogue` · `split_shot` · `trim_shot` · `regenerate_shot_video` · `edit_video_shot` → `rerender_episode` | re-composing to fix what a clip *says* |
 | Wants to assemble the cut themselves | `export_handoff_pack` → `get_handoff_toolchain` | `compose_episode` (pick one) |
 | A multi-language release | `translate_subtitles` · `subtitle_secondary_lang` in project settings | — |
 
@@ -399,6 +399,16 @@ length, cross-shot dialogue splits, wrong time-of-day or era, orphan motifs,
 props in the wardrobe segment, missing `[SFX]`/`[BGM]`, group-shot head counts.
 Storyboard-level issues do **not** need a script edit at all: use
 `update_shot` / `replace_shot_dialogue`.
+
+When the frame or the motion is off in a way the business text cannot express,
+edit the shot's prompt bodies directly: `get_shot_prompts` reads the current
+`image_prompt` / `video_prompt` for one shot, `update_shot` writes them back.
+Keep the `@char:N` / `@scene:M` markers the response lists under `asset_tokens`
+— they are what pulls each character's portrait and each scene's plate into the
+render; drop one and that reference silently stops being sent. The prompt body
+is only the part you write: the platform still layers identity anchors and
+consistency constraints on top at generation time. Editing a prompt does not
+re-generate anything — regenerate the shot afterwards.
 
 ## Failure playbook
 

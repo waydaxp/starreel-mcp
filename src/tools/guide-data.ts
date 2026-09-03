@@ -82,10 +82,10 @@ export const ENTRY_POINTS: EntryPoint[] = [
     use: [
       'get_bulk_import_spec(契约 + 模板 + 成品示例 + 枚举与上限,与校验器同源)',
       'check_bulk_import(同一份 zod 校验;引用不到的角色/场景、死镜、台词里的舞台指示都会报出来)',
-      'bulk_import_storyboards(mode=merge 更新/保留,replace 替换全部需客户明确同意;prompt 字段由平台生成)',
+      'bulk_import_storyboards(mode=merge 更新/保留,replace 替换全部需客户明确同意;自带的 image_prompt/video_prompt 逐字照用,没填的镜平台拼基础描述)',
     ],
     avoid: '别把 JSON 转成文本再走 import_storyboard_table,也别一条条 update_shot 手建——结构化数据就走结构化通道。',
-    note: '通过 MCP 导入时 image_prompt/video_prompt/frame_visual_contract 会被忽略,平台拼基础描述;导入默认带 auto_complete(后台 AI 填专业字段,并只给平台拼基础描述的镜扩写出图/视频提示词,文本步后付、调用前告知客户)——回执 started 后 `get_autofill_status` 轮询到 done 再 `review_storyboards`。',
+    note: '自带 image_prompt/video_prompt 会逐字保留(只有 frame_visual_contract 这个内部帧契约被忽略),没填的镜平台拼基础描述;导入默认带 auto_complete(后台 AI 填专业字段,并只给平台拼基础描述的镜扩写出图/视频提示词,文本步后付、调用前告知客户)——回执 started 后 `get_autofill_status` 轮询到 done 再 `review_storyboards`。',
     free: false,
     flow: 'get_bulk_import_spec → check_bulk_import(errors 清零) → bulk_import_storyboards(默认 auto_complete) → get_autofill_status 到 done → review_storyboards',
   },
@@ -140,7 +140,8 @@ export const ENTRY_POINTS: EntryPoint[] = [
     use: [
       'scan_dialogue_coverage(先定病因:话没说完/念错/走到别的镜;免费)',
       'scan_intra_shot_cuts(「切太快」先看厂商有没有在单镜内自行硬切;免费)',
-      'update_shot(景别/动作/台词/运镜等文本字段;character_ids 全量覆盖)',
+      'get_shot_prompts(读某镜的出图/视频提示词正文,免费;改提示词前先读现值)',
+      'update_shot(景别/动作/台词/运镜等文本字段;image_prompt/video_prompt 提示词正文;character_ids 全量覆盖)',
       'replace_shot_dialogue',
       'repair_episode_dialogue(换音频不重生视频,按 TTS 费率,比重生便宜几个数量级)',
       'split_shot',

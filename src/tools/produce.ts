@@ -151,7 +151,7 @@ const WORKFLOW_HINT =
   '★★客户交来的**已经是成品分镜表**(逐镜写了秒数/景别/运镜)时,以上两条都不适用——直接用 import_storyboard_table 建分镜,'+
   '跳过改写与拆镜。走改写那条路会把秒数/景别/运镜/STYLE/文字卡当非剧情内容剥掉(生产实测 8 镜 36 秒→20 镜 109 秒)。' +
   '★两条导入通道都是确定性的——写错了也会原样建进去,所以**先取契约再自检再导**:分镜表走 get_storyboard_table_spec → check_storyboard_table → import_storyboard_table;' +
-  '客户自己的工具/表格能导出结构化数据、或让外部 AI 直接产 JSON 时走 get_bulk_import_spec → check_bulk_import → bulk_import_storyboards(角色+场景+分镜一次建好)。' +
+  '客户自己的工具/表格能导出结构化数据、或让外部 AI 直接产 JSON 时走 get_bulk_import_spec → check_bulk_import → bulk_import_storyboards(只建分镜;角色/场景/道具由 extract_assets 从剧本提取,导入按名字绑定已有的——先 extract 再导)。' +
   '两条导入默认带 auto_complete(后台 AI 补专业字段 + 出图/视频提示词,文本步后付,调用前告知客户):回执 started=true 就用 get_autofill_status 轮询到 done 再 review_storyboards——补全会改镜,先审的 token 会失效。' +
   '用 get_pipeline_status 查进度(按项目类型返回专属步骤)。'
 
@@ -402,6 +402,7 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       '顺序 = 镜号|秒数|景别|运镜|标记;标记 `不切` 表示该镜绝不可再拆、`★` 表示关键镜;' +
       '运镜的「横移」映射 tracking、「摇」映射 pan(两者在反光面上的倒影行为不同,别混)。' +
       '`[字卡 9s] 行一 | 行二` 会建成卡镜(成片层直接渲黑底卡,不出图不出视频)。' +
+      '★道具:`[道具] 名A、名B` 行按**本剧道具库里的道具名**绑定 prop_ids,正文里完整出现的道具名也自动绑;回执 prop_names_unresolved 列出没绑上的名字(先建道具再导,或改名)。' +
       '★不传 content 时读本集「原始内容」。没有任何逐镜声明会被 400 拒(那是剧本不是分镜表,请走正常拆镜)。' +
       '★本集已有分镜时返回 409 并告知镜数,确认要替换再带 confirm_replace:true(旧镜转已删除状态、可恢复)。' +
       '秒数/景别缺失的镜照常导入但会在 issues 里列出——系统不替客户猜,猜错一个秒数就是成片时长错。' +
@@ -453,10 +454,10 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   server.tool(
     'get_bulk_import_spec',
     '取**批量导入 JSON 的格式契约**:markdown 范本全文 + template(占位符模板,<...> 必须替换) + filled_example(成品对照,可直接照结构填) + external_prompt(转发给外部 AI/自己工具的任务提示词) + checklist + enums(mode/role/char_type/shot_type/action_motion_class 的合法值,与校验器同源) + limits(数组与字段上限)。免费·静态·不扣费。' +
-      '★什么时候用:客户能从自己的工具/表格导出结构化数据、或要让外部 AI 直接产出 JSON 一次建好角色+场景+分镜时——**在 bulk_import_storyboards 之前**先调它。' +
+      '★什么时候用:客户能从自己的工具/表格导出结构化数据、或要让外部 AI 直接产出 JSON 一次建好本集分镜时——**在 bulk_import_storyboards 之前**先调它。' +
       '★与 import_storyboard_table(文本一镜一行)的分工:数据本来就是结构化的走 JSON;客户手上是文本分镜表走那条。' +
-      '★契约要点:顶层 { mode, episode_meta?, characters?[], scenes?[], storyboards[] };characters 按 name 去重、scenes 按 location+time 去重、storyboards 按 storyboard_number 去重;' +
-      'bound_characters 引用 characters[].name(或本剧已有角色名)、scene_ref 引用 scenes[] 的 location+time——引用不到会**静默跳过**;每镜 action/description 至少一个;dialogue 是 `说话人：台词`、别写舞台指示(会被念出来);' +
+      '★契约要点:顶层 { mode, episode_meta?, characters?[], scenes?[], storyboards[] };characters[]/scenes[] **只是引用声明、不落库**(角色/场景/道具由 extract_assets 从剧本提取,导入按名字绑定已有的,所以先 extract 再导;道具不是角色,别写进 characters[]);storyboards 按 storyboard_number 去重;' +
+      'bound_characters 引用 characters[].name(或本剧已有角色名)、bound_props 引用本剧道具库里的道具名(不传则按正文里出现的道具名自动绑)、scene_ref 引用 scenes[] 的 location+time——引用不到会**静默跳过**;每镜 action/description 至少一个;dialogue 是 `说话人：台词`、别写舞台指示(会被念出来);' +
       'image_prompt/video_prompt 可不填(没填的镜由平台按景别+场景+光线+action 拼基础描述);填了就**逐字照用**,平台不覆盖。frame_visual_contract 是内部帧契约,导入时忽略。',
     {},
     async () => jsonResult(await client.produceGet('/bulk-import/spec')),
@@ -472,7 +473,7 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   )
   server.tool(
     'bulk_import_storyboards',
-    '把一份结构化 JSON 一次性建成本集的角色 / 场景 / 分镜(按 name / location+time / storyboard_number 去重更新)。免费·确定性·不调 AI。' +
+    '把一份结构化 JSON 一次性建成本集的分镜(按 storyboard_number 去重更新)。**不建角色/场景/道具**——它们由 extract_assets 从剧本提取,导入只按名字绑定已有的(回执 characters_unmatched / char_refs_unresolved 列出没绑上的;先 extract 再导)。免费·确定性·不调 AI。' +
       '★三步走:① get_bulk_import_spec 取契约与成品示例;② check_bulk_import 自检到 errors 清零;③ 再调本工具。' +
       '★mode=merge(默认)保留未提到的镜;mode=replace 替换本集**全部**分镜(旧镜与已生成图/视频归档可恢复、不会自动重挂)——replace 必须先得到客户明确同意。' +
       '★image_prompt / video_prompt 想自己写就直接写在每镜里,**逐字照用不被覆盖**;没填的镜平台拼基础描述(回执 base_prompts_built 是拼了几镜),导入后可用 get_shot_prompts 读、update_shot 改。' +

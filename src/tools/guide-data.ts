@@ -78,11 +78,11 @@ export const ENTRY_POINTS: EntryPoint[] = [
     flow: 'get_storyboard_table_spec → 外部工具按范本整理 → check_storyboard_table(errors 清零) → import_storyboard_table(默认 auto_complete) → get_autofill_status 到 done → review_storyboards',
   },
   {
-    customer_has: '结构化数据(客户自己的工具 / 表格导出 / 第三方 AI 直接产 JSON,想一次建好角色+场景+分镜)',
+    customer_has: '结构化数据(客户自己的工具 / 表格导出 / 第三方 AI 直接产 JSON,想一次建好本集分镜;角色/场景/道具仍由 extract_assets 提取)',
     use: [
       'get_bulk_import_spec(契约 + 模板 + 成品示例 + 枚举与上限,与校验器同源)',
       'check_bulk_import(同一份 zod 校验;引用不到的角色/场景、死镜、台词里的舞台指示都会报出来)',
-      'bulk_import_storyboards(mode=merge 更新/保留,replace 替换全部需客户明确同意;自带的 image_prompt/video_prompt 逐字照用,没填的镜平台拼基础描述)',
+      'bulk_import_storyboards(只建分镜、不建角色/场景/道具——先 extract_assets 再导,导入按名字绑定已有的;mode=merge 更新/保留,replace 替换全部需客户明确同意;自带的 image_prompt/video_prompt 逐字照用,没填的镜平台拼基础描述)',
     ],
     avoid: '别把 JSON 转成文本再走 import_storyboard_table,也别一条条 update_shot 手建——结构化数据就走结构化通道。',
     note: '自带 image_prompt/video_prompt 会逐字保留(只有 frame_visual_contract 这个内部帧契约被忽略),没填的镜平台拼基础描述;导入默认带 auto_complete(后台 AI 填专业字段,并只给平台拼基础描述的镜扩写出图/视频提示词,文本步后付、调用前告知客户)——回执 started 后 `get_autofill_status` 轮询到 done 再 `review_storyboards`。',

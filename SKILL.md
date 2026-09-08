@@ -595,7 +595,8 @@ to close") tells the vendor to fit that entire sequence into each 3-second shot.
   `quote/generate_frames`, `chain_frames`, `quote/generate_videos`
 - **Audio**: `generate_tts` (required before final cut), `clone_voice`,
   `speak_with_voice`, `set_character_voice`, `list_voices`, `delete_voice`,
-  `generate_bgm`, `replace_shot_dialogue`
+  `generate_bgm` (optional `prompt` steers the music; read `get_bgm_prompt_guide` first),
+  `get_bgm_prompt_guide`, `replace_shot_dialogue`
 - **Finish**: `compose_episode`, `get_final_cut`, `get_export`,
   `generate_episode_poster`, `generate_cover`
 - **Assemble it yourself**: `export_handoff_pack`, `get_handoff_toolchain` —

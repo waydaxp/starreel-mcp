@@ -279,7 +279,7 @@ export const OPTIONAL_BOOSTS = [
   { what: '口型同步', tool: 'lipsync_episode', when: 'TTS 配音项目需要对口型时' },
   { what: '海报 / 封面', tool: 'generate_episode_poster', when: '成片后;`generate_drama_poster` / `generate_cover` 同族' },
   { what: '音效 / 特效 / 转场(本地库匹配)', tool: 'generate_sfx', when: '免费;`generate_effects` / `generate_transitions` 同族' },
-  { what: '配乐', tool: 'generate_bgm', when: '按整集情绪弧线生成;终拼自动接管' },
+  { what: '配乐', tool: 'generate_bgm', when: '按整集情绪弧线生成;终拼自动接管。客户想指定音乐方向就带 prompt(整集一条),写法先读 `get_bgm_prompt_guide`(免费);不带 prompt 就是全自动' },
   { what: '字幕翻译', tool: 'translate_subtitles', when: '出海;双语烧录在项目设定里开' },
 ]
 
@@ -290,7 +290,7 @@ export const BILLING = {
     'quote_id 一次性、约 15 分钟过期;绝不擅自确认,视频报价可能上万点。',
   pay_as_you_go: '文本步(改写 / 提取 / 自动填充 / 增强提示词)按 token 后付,无需报价但要事先告知。',
   free_families: [
-    '所有 get_* / list_* / scan_* / review_* / check_* / recommend_* / get_capabilities_guide / get_autofill_status',
+    '所有 get_* / list_* / scan_* / review_* / check_* / recommend_* / get_capabilities_guide / get_autofill_status / get_bgm_prompt_guide',
     'compose_episode / rerender_episode / render_multi_aspect / generate_sfx / generate_effects / generate_transitions',
     'import_storyboard_table / adopt_external_script / get_script_format_spec / check_script_format',
     'get_storyboard_table_spec / check_storyboard_table / get_bulk_import_spec / check_bulk_import / bulk_import_storyboards',

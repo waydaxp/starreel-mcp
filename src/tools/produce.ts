@@ -1253,9 +1253,38 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     'generate_bgm',
     '给整集生成/更换 AI 配乐(按情绪弧线)。后台异步,按用量后付不欠费。返回情绪弧线段数与预估耗时;' +
       '用 get_bgm_status 轮询生成进度。★配乐生成/改动**不会自动进已有成片**——完成后必须重新 ' +
-      'compose_episode(免费)才能听到;get_final_cut 的 bgm_stale=true 就是在提示这一步。别用 re-render(吃旧时间线,不含新配乐)。',
-    { episode_id: z.number().int().positive() },
-    async ({ episode_id }) => jsonResult(await client.producePost(`/episodes/${episode_id}/bgm`)),
+      'compose_episode(免费)才能听到;get_final_cut 的 bgm_stale=true 就是在提示这一步。别用 re-render(吃旧时间线,不含新配乐)。\n' +
+      '★prompt 可选:不传=全自动(和以前一样)。传了就是在自动结果上再加方向,整集一条,系统仍按情绪弧线分幕。' +
+      '怎么写见 get_bgm_prompt_guide(免费);要点=只写音乐维度(情绪气质/主奏配器/速度动态/厚薄空间/风格参照),' +
+      '别写剧情(「主角发现真相时要紧张」→写「紧张,节奏推进感强」)。' +
+      '只出纯器乐:要人声/歌词/拟音当乐器都不会生效,会在 prompt_warnings 里点名但**不拦生成**。\n' +
+      '★prompt_mode: guide(默认)=你的要求与平台专业护栏(时代与题材匹配/配器节制/高潮保规模/段间差异)一起生效;' +
+      'override=直通,跳过护栏,只保留技术底线(纯器乐/时长/可循环)。override 效果自负,' +
+      '**先用 guide 试**,确实拧不过来再换。不传 prompt 时沿用该集上次填的(get_bgm_status 可查)。',
+    {
+      episode_id: z.number().int().positive(),
+      prompt: z.string().optional().describe(
+        '配乐方向,整集一条,≤800 字。只写音乐维度,别写剧情。传空字符串=清除已存的提示词。'
+        + '不传=沿用该集上次填的(没填过就是全自动)。',
+      ),
+      prompt_mode: z.enum(['guide', 'override']).optional().describe(
+        'guide(默认)=提示词与平台护栏一起生效;override=直通跳过审美护栏(技术底线仍在)。',
+      ),
+    },
+    async ({ episode_id, prompt, prompt_mode }) =>
+      jsonResult(await client.producePost(`/episodes/${episode_id}/bgm`, {
+        ...(prompt === undefined ? {} : { prompt }),
+        ...(prompt_mode ? { prompt_mode } : {}),
+      })),
+  )
+  server.tool(
+    'get_bgm_prompt_guide',
+    '取「AI 配乐提示词」的书写规范:两个档位怎么选、该写哪些维度(附可照抄的示例)、' +
+      '哪些是写了也不会生效的硬限制(纯器乐/时长/不做音效/不复刻具体曲目)、常见写坏的方式。' +
+      '免费,纯静态,与具体剧目无关——写 generate_bgm 的 prompt 之前先读它,别自己猜。' +
+      '也适合直接把要点转述给客户看。',
+    {},
+    async () => jsonResult(await client.produceGet('/bgm-prompt-guide')),
   )
   server.tool(
     'set_shot_name_card',

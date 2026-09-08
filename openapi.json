@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "StarReel Production API",
-    "version": "0.1.58",
-    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.58 tool surface (operationIds match MCP tool names 1:1)."
+    "version": "0.1.59",
+    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.59 tool surface (operationIds match MCP tool names 1:1)."
   },
   "servers": [
     {
@@ -5803,8 +5803,8 @@
     "/scenes/{scene_id}": {
       "put": {
         "operationId": "update_scene",
-        "summary": "改场景设定(名字/描述/地点/时段/氛围)",
-        "description": "改场景设定(名字/描述/地点/时段/氛围)。免费。",
+        "summary": "改场景设定(名字/描述/地点/时段/氛围),以及**场景图的出图提示词正文**(image_prompt)",
+        "description": "改场景设定(名字/描述/地点/时段/氛围),以及**场景图的出图提示词正文**(image_prompt)。免费(纯文本写库)。★场景图不满意时,改 image_prompt 才是直接手段——只改地点/时段是让平台重拼,拧不过来;改前先用 get_scene_prompt 读现值,改完用 regenerate_scene_image 重出这一场的图。★场景图变了不会自动重出已生成的镜头帧:那些帧仍拿旧场景图当背景锚,要跟上得逐镜重出。",
         "tags": [
           "scenes"
         ],
@@ -5843,6 +5843,9 @@
                   },
                   "mood": {
                     "type": "string"
+                  },
+                  "image_prompt": {
+                    "type": "string"
                   }
                 }
               }
@@ -5880,6 +5883,100 @@
         "operationId": "delete_scene",
         "summary": "删除一个场景",
         "description": "删除一个场景。免费。",
+        "tags": [
+          "scenes"
+        ],
+        "parameters": [
+          {
+            "name": "scene_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "StarReel envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "description": "Operation result payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient prepaid balance (never overdrafts); response carries `needed` points"
+          }
+        }
+      }
+    },
+    "/scenes/{scene_id}/image/regenerate": {
+      "post": {
+        "operationId": "regenerate_scene_image",
+        "summary": "按当前提示词重出**这一场**的场景图(改完 image_prompt 让画面跟上)",
+        "description": "按当前提示词重出**这一场**的场景图(改完 image_prompt 让画面跟上)。图片步,按用量后付不欠费。★覆盖式:出好后本场旧图被换掉(要留档先 get_scene_prompt/资产列表拿旧图 URL)。★已生成的镜头帧不会自动跟着重出——它们仍拿旧场景图当背景锚,要跟上得逐镜重出。★与 generate_scene_images 的区别:那个是整剧批量、只补**缺图**的场景,已有图的一律跳过;这个是单场景强制重出。客户自己上传过的场景图也会被覆盖,先确认是不是要保留。",
+        "tags": [
+          "scenes"
+        ],
+        "parameters": [
+          {
+            "name": "scene_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "StarReel envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "description": "Operation result payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient prepaid balance (never overdrafts); response carries `needed` points"
+          }
+        }
+      }
+    },
+    "/scenes/{scene_id}/prompt": {
+      "get": {
+        "operationId": "get_scene_prompt",
+        "summary": "读某一场**场景图(空景基板)**的提示词正文,供直接微调后用 update_scene 的 image_prompt 写回",
+        "description": "读某一场**场景图(空景基板)**的提示词正文,供直接微调后用 update_scene 的 image_prompt 写回。免费。★逐场按需:改哪场读哪场(整集列表 get_scenes 是纯资产视图,不含提示词)。★这是场景表里的正文层;出图时平台还会在其上拼画风块、空景约束与时代锁(不在此处,也无需你写)。回执的 has_image 说明这一场是否已有图。",
         "tags": [
           "scenes"
         ],

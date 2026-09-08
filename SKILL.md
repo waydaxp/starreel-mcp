@@ -72,6 +72,7 @@ announces a condensed version as MCP `instructions` at connect time.
 | A finished **shot list** (per-shot seconds / shot size / camera move) | `get_storyboard_table_spec` (the contract: shot-size / camera-move vocabulary, body layout, text-card syntax, a prompt for the external AI) → `check_storyboard_table` (same parser as the import; clear `errors`, read every `warning` — a missing duration, an unrecognised shot size or an empty body all get imported as-is) → `import_storyboard_table` (defaults to `auto_complete`: one background batch fills the professional fields and expands every shot's platform-built base description into full image / video prompts — metered text, tell the customer first; `auto_complete: false` imports only) → `get_autofill_status` until `done` → `review_storyboards` | `rewrite_script` + `generate_storyboards` — strips every production parameter (measured: 8 shots / 36 s became 20 shots / 109 s); importing without the check; reviewing before the completion batch finishes (the token expires when shots change) |
 | **Structured data** — their own tool / spreadsheet export, or an external AI producing JSON (cast + scenes + shots in one go) | `get_bulk_import_spec` (contract + template + worked example + enums, same source as the validator) → `check_bulk_import` (same zod schema; unresolved character / scene references, dead shots and stage directions inside dialogue are surfaced) → `bulk_import_storyboards` (`mode: "replace"` only with the customer's explicit OK; defaults to `auto_complete`: professional fields for every shot, full image / video prompts only for shots that had no `image_prompt` — prompts you supply yourself are kept verbatim — metered text, tell the customer first) → `get_autofill_status` until `done` → `review_storyboards` | converting the JSON to text for `import_storyboard_table`; hand-building shots with `update_shot`; reviewing before the completion batch finishes |
 | Their own portraits / scene / prop / shot images | `upload_image` · `set_character_portrait` · `upload_scene_image` · `upload_prop_sheet` · `upload_shot_frame` | rendering a "fix" elsewhere and uploading it — use `generate_shot_frame` |
+| A scene plate that came out wrong (backdrop, era, light, layout) | `get_scene_prompt` → `update_scene` (`image_prompt`) → `regenerate_scene_image`; already-rendered shot frames still anchor on the old plate, so regenerate those shots too | re-running `generate_scene_images` (it only fills scenes that have **no** plate — it will not touch this one) |
 | A voice sample / a required voice | `clone_voice` → `speak_with_voice` → `set_character_voice` / `assign_voices` | cloning without the rights-holder's consent |
 | A song + lyrics | `create_drama` (`project_type: "mv"`) → `set_mv_lyrics` → `generate_mv_story` → `generate_mv_script` | `rewrite_script` (blocked for MV) |
 | A product / brand | `create_drama` (`project_type: "ad"` or `"brand_film"`) → `add_product` → `generate_product_sheet` | writing brand copy as dialogue (it gets spoken) |
@@ -409,6 +410,14 @@ render; drop one and that reference silently stops being sent. The prompt body
 is only the part you write: the platform still layers identity anchors and
 consistency constraints on top at generation time. Editing a prompt does not
 re-generate anything — regenerate the shot afterwards.
+
+The same applies one layer up, to the **scene plate** (the empty backdrop every
+shot in that scene anchors on): `get_scene_prompt` reads one scene's prompt body,
+`update_scene` writes it back as `image_prompt`, and `regenerate_scene_image`
+re-renders that one scene — overwriting whatever plate it had, including an
+uploaded one. Write the plate body as an environment with no people in it;
+characters enter at the shot-frame layer. Shot frames already rendered are not
+re-rendered with it: they still carry the old plate as their background anchor.
 
 ## Failure playbook
 

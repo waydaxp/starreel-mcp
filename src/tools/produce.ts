@@ -1417,7 +1417,10 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
   )
   server.tool(
     'update_scene',
-    '改场景设定(名字/描述/地点/时段/氛围)。免费。',
+    '改场景设定(名字/描述/地点/时段/氛围),以及**场景图的出图提示词正文**(image_prompt)。免费(纯文本写库)。' +
+      '★场景图不满意时,改 image_prompt 才是直接手段——只改地点/时段是让平台重拼,拧不过来;' +
+      '改前先用 get_scene_prompt 读现值,改完用 regenerate_scene_image 重出这一场的图。' +
+      '★场景图变了不会自动重出已生成的镜头帧:那些帧仍拿旧场景图当背景锚,要跟上得逐镜重出。',
     {
       scene_id: z.number().int().positive(),
       name: z.string().optional(),
@@ -1426,8 +1429,29 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       physical_location: z.string().optional(),
       time_of_day: z.string().optional(),
       mood: z.string().optional(),
+      image_prompt: z.string().optional()
+        .describe('这一场**空景图**的提示词正文(全量覆盖本场现值)。★先 get_scene_prompt 读现值再改;★写空景——这张是场景基板,画面里不该有人物(人物由镜头帧那层注入)。出图时平台会在正文之上再拼画风块、空景约束与时代锁,不必你写'),
     },
     async ({ scene_id, ...fields }) => jsonResult(await client.producePut(`/scenes/${scene_id}`, fields)),
+  )
+  server.tool(
+    'get_scene_prompt',
+    '读某一场**场景图(空景基板)**的提示词正文,供直接微调后用 update_scene 的 image_prompt 写回。免费。' +
+      '★逐场按需:改哪场读哪场(整集列表 get_scenes 是纯资产视图,不含提示词)。' +
+      '★这是场景表里的正文层;出图时平台还会在其上拼画风块、空景约束与时代锁(不在此处,也无需你写)。' +
+      '回执的 has_image 说明这一场是否已有图。',
+    { scene_id: z.number().int().positive() },
+    async ({ scene_id }) => jsonResult(await client.produceGet(`/scenes/${scene_id}/prompt`)),
+  )
+  server.tool(
+    'regenerate_scene_image',
+    '按当前提示词重出**这一场**的场景图(改完 image_prompt 让画面跟上)。图片步,按用量后付不欠费。' +
+      '★覆盖式:出好后本场旧图被换掉(要留档先 get_scene_prompt/资产列表拿旧图 URL)。' +
+      '★已生成的镜头帧不会自动跟着重出——它们仍拿旧场景图当背景锚,要跟上得逐镜重出。' +
+      '★与 generate_scene_images 的区别:那个是整剧批量、只补**缺图**的场景,已有图的一律跳过;' +
+      '这个是单场景强制重出。客户自己上传过的场景图也会被覆盖,先确认是不是要保留。',
+    { scene_id: z.number().int().positive() },
+    async ({ scene_id }) => jsonResult(await client.producePost(`/scenes/${scene_id}/image/regenerate`)),
   )
   server.tool(
     'delete_scene',

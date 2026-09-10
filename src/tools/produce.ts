@@ -613,8 +613,11 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       '★每镜还带**结构化状态**:frame_status/video_status(ready/pending/authorizing/rejected/failed/none/not_required)、' +
       '★not_required=旁白/片尾卡镜:帧与视频由成片层渲染,本镜不需要生成——数补齐进度时把它当已完成,别重试。' +
       'fail_reason(sensitive/text_sensitive/copyright/face_mismatch/account_overdue/quota_full/authorizing/' +
-      'insufficient_credits/transient)、retryable(true=可重试;false=改内容换图,重试无效)、fail_hint(人读文案)。' +
+      'insufficient_credits/transient/repeat_rejected/pair_collateral)、retryable(true=可重试;false=改内容换图,重试无效)、fail_hint(人读文案)。' +
       '照 retryable 判该重试还是该改内容,别解析中文。' +
+      '★pair_collateral=同镜另一帧未通过、本帧随批结束——**本帧自身没被判不合格,别去改它**:有 reopen_pair_id 就用它只重掷有过错的一侧,否则直接重生本镜。' +
+      '★若某镜带 degraded_frames:[{frame_type,reason,reason_label,since,hint}],表示该帧是系统在同因连拒熔断后**放行**的(判据照记未拒),' +
+      'URL 上与干净帧无区别但需人工复核;不满意按 hint 修正输入后 generate_shot_frame 重生该帧。' +
       '★first_frame_source/last_frame_source=\'upload\' 表示该帧是**外部上传图**(绕开了身份锚/画风锚/' +
       'best-of-N/帧审计整条质量链路)——人物·服装·画风漂移排查先看这些镜;外部图导致的漂移不是平台生成质量问题,' +
       '修复正路是删掉外部图改走 generate_shot_frame 平台重生。' +

@@ -440,7 +440,15 @@ Map the reason to an action:
 | `insufficient_credits` | false | Balance too low for this call | Stop, prompt to recharge (402) |
 | `authorizing` | true | Face frame queuing for KYC (not a rejection) | Wait ~1 min, retry |
 | `transient` | true | BestOfN / quality-gate / rate-limit / network | Back off, retry |
+| `repeat_rejected` | false | Same shot rejected for the same reason until the circuit breaker tripped (auto-clears after 24 h) | Change the prompt / references / contract **first**; a blind retry is a full-price repeat of the same rejection |
+| `pair_collateral` | true | The **other** frame of this shot failed its audit; this frame was never judged bad — it was only closed out with the batch | Do **not** edit this frame. If the shot carries `reopen_pair_id`, pass it to `generate_shot_frame` to redo only the faulty side; otherwise regenerate the shot |
 | `unknown` | false | Unclassified | Read `fail_hint`; don't auto-retry |
+
+A shot may also carry `degraded_frames: [{ frame_type, reason, reason_label, since,
+hint }]`. That frame was **released by the system after the same gate rejected it
+repeatedly** (the verdict is recorded, not enforced) — the URL looks like any clean
+frame, but it needs a human look. If it is not acceptable, fix the input the
+`hint` names and regenerate that frame with `generate_shot_frame`.
 
 Three action classes, one decision: **moderation / identity / copyright → change
 content**; **overdue / token → not self-healable (tell user / wait)**; **network

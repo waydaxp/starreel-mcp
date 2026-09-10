@@ -612,9 +612,17 @@ to close") tells the vendor to fit that entire sequence into each 3-second shot.
   decide transitions and assemble the cut on your own side. Use this instead of
   `compose_episode` when you want to judge each seam yourself; use
   `compose_episode` when you want the platform's finishing pipeline (pre-flight
-  checks, A/V duration parity, loudness mastering). Three facts that will bite you:
-  `audio_contract.mode="tts"` means the raw clips have **no voice** (dialogue ships
-  separately — skip it and the episode is silent); every shot must be cut to
+  checks, A/V duration parity, loudness mastering). Call
+  `get_capabilities_guide(section="local_postproduction")` for the full stage-by-stage
+  walkthrough. Three facts that will bite you: **where the voice lives is per-shot —
+  read `shots[].voice_track.location`, never the episode-level
+  `audio_contract.mode`** (that field is a declaration; fully-offscreen narration
+  shots get their voice mixed into the raw clip on our side, so even a `mode="tts"`
+  episode contains shots whose voice is already baked in — re-laying it says the line
+  twice, skipping it loses it, and `location="missing"` means we know the voice is
+  gone and you should regenerate that shot rather than paper over it). Check per line
+  with `shots[].spoken_lines[]`: subtitles are per-line but audio is per-shot, so
+  **having subtitles never means having sound**; every shot must be cut to
   `trim_head_ms`/`duration_ms` or you splice in frames the platform already QC'd out;
   and all subtitle/dialogue/SFX offsets are relative to **each shot's own trimmed
   start**, not to the final timeline — add whatever overlapping transitions you like

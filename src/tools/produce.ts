@@ -268,7 +268,7 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       ethnicity_note: z.string().optional().describe("ethnicity='custom' 时的自由文本(如 北欧/波斯);其余取值忽略"),
       project_type: z.enum(['drama', 'ad', 'mv', 'brand_film']).optional()
         .describe('项目类型(默认 drama)。ad=广告(改写走 ad_script_rewriter);mv=音乐(走歌词→故事→剧本子流程);brand_film=品牌微电影(默认16:9)'),
-      rewrite_mode: z.enum(['standard', 'director']).optional().describe('AI改写深度:standard 或 director(导演级)'),
+      rewrite_mode: z.enum(['standard', 'director']).optional().describe('AI改写深度(★默认 director):director=只做格式规范化与最小可拍性修正,不擅自补台词补动机;standard=按商业短剧剧作律优化,会主动加戏'),
       rewrite_pipeline: z.enum(['auto', 'two_pass', 'single_forced']).optional().describe('改写流水线:auto(默认,按原稿形态智能路由——剧本形态走两步保真,小说/大纲走创作改写)/two_pass(强制两步保真,客户自带成熟剧本必选)/single_forced(强制单步创作)'),
       fidelity_enforce: z.number().int().min(0).max(1).optional().describe('1=改写保真硬闸:丢台词/丢人物/丢动作节拍直接拒收重做(客户要求逐句保留时开)'),
       director_style: z.string().optional().describe('导演风格包 key'),
@@ -885,7 +885,7 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       director_style: z.string().optional(),
       theme_statement: z.string().optional().describe('一句话主题'),
       subtitle_preset: z.string().optional(),
-      scene_group_mode: z.boolean().optional().describe('长镜模式(连续动作/电影级长镜)'),
+      scene_group_mode: z.boolean().optional().describe('长镜模式(连续动作/电影级长镜·★所有类型建剧默认开):false=改回逐镜独立生成再拼接'),
       // 广告专属
       cta_text: z.string().optional(),
       target_duration_s: z.number().optional(),
@@ -1769,8 +1769,14 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
       '写一份 plan.json;④ 用 get_handoff_toolchain 拿到 compile_timeline.py 展开时间轴、' +
       'assemble.sh 装配出成片。工具链已经把「加了重叠转场之后字幕/对白/音效怎么跟着位移」算好了。\n' +
       '\n【三个不看就会翻车的事实】\n' +
-      '① audio_contract.mode="tts" 时**裸片里没有人声**,对白在 dialogue_audio 里;不铺就是整集没台词。' +
-      'mode="clip" 时人声已烤在裸片音轨里,反过来**不要**再叠。\n' +
+      '① **人声在哪要逐镜读 `shots[].voice_track.location`,不能读整集的 audio_contract.mode**——' +
+      '后者是整剧级声明,而全画外旁白镜的旁白是平台在完成侧混进裸片的,同一集里逐镜可以不同。' +
+      '四种取值各有各的处置:`separate_file`=对白在 dialogue_audio,不铺这镜就没台词;' +
+      '`baked_in_clip`=已在裸片音轨里,再叠一遍会双声;' +
+      '`missing`=**平台侧确认缺失**(旁白补偿失败),字幕还在但声音哪都没有——回平台重生成该镜,' +
+      '拉长转场掩盖不了;`unknown`=有台词却查不到来源,**必须试听裸片**再决定。' +
+      '★有字幕从来不等于有声音:字幕是逐句的,音频是逐镜的。`conflicts_with_contract=true` 的镜' +
+      '以实测为准,notes 里已按镜号点名。\n' +
       '② 每镜必须按 trim_head_ms / duration_ms 裁剪再用;直接拼整条裸片会把平台已经 QC 掉的' +
       '首尾形变帧一起拼进去。\n' +
       '③ 字幕 cue、dialogue_audio.offset_ms、sfx[].offset_ms 的基准都是「该镜 trim 之后的第 0 毫秒」,' +
@@ -1785,6 +1791,16 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
           step_1_download:
             '按 shots[].clip.url / dialogue_audio.url / sfx[].url / bgm[].url 下载素材。' +
             'URL 到 expires_at 失效,过期重新调本工具。',
+          step_1b_verify_voice:
+            '★下载完先核对声音,再动剪辑。**逐镜**读 voice_track.location 决定这镜的人声该不该铺、' +
+            '能不能叠;location="unknown" 的镜**必须实际试听裸片**,不能凭字幕存在推定有声音;' +
+            'location="missing" 的镜先回平台重生成,别开始剪。' +
+            'clip.probed_has_audio_stream=false 表示平台实测这条裸片连音轨流都没有——' +
+            '注意反过来不成立:有音轨不代表有人声,全旁白镜的环境音本来就是要求厂商出的。\n' +
+            '★再**逐行**读 shots[].spoken_lines[]:字幕是逐句的、音频是逐镜的,' +
+            '「这镜有字幕」推不出「每句都有声音」。每行带 speaker / text / voice_status,' +
+            '把它当逐句核对清单用。voice_status="caption_no_voice" 的行是字卡文本,' +
+            '**本来就没有配音**(平台侧也是当独立字幕呈现的)——不是缺失,别去补一段不该存在的配音。',
           step_2_decide_transitions:
             '自己分析画面决定每个接缝的转场。scene_boundary="start" 是换场(适合给转场),' +
             '"continue" 是同场景(平台默认硬切——同场景逐镜叠化是"幻灯片拼凑感"的主因)。' +
@@ -1800,6 +1816,11 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
             '  python3 compile_timeline.py ./pack --transitions plan.json\n' +
             '  ./assemble.sh ./pack out.mp4 plan.json',
           gotchas: [
+            'voice_track.location="baked_in_clip" 的镜**不要**再铺 dialogue_audio,那一镜的人声已经在裸片音轨里,' +
+              '叠上去是同一句话说两遍(全画外旁白镜最常见)。',
+            'subtitle.cues 的文本已剥掉说话人前缀与画外标记(与平台烧字幕同一条清洗),直接烧即可,' +
+              '别再自己解析「名:」——但 cues 的**切分**是按语音停顿来的,与 spoken_lines 的行不是一一对应,' +
+              '逐句核对声音请用 spoken_lines,不要按 cue 条数推定句数。',
             'clip.duration_source="authored" 的镜是 probe 失败退回声明时长的,请自行 ffprobe 校正,否则拼接有累积误差。',
             'render_target.color_lut 非 null 时,裸片是**未调色**的:必须施加随包的 haldclut 查找表,' +
               '否则你的成片与平台成片有色差。fetch_pack.py 会下载它、assemble.sh 会自动施加。',

@@ -14,7 +14,9 @@ export function registerGuideTools(server: McpServer) {
       'entry_points(客户手上是小说/成熟剧本/想去外部 AI 改写/成品分镜表/自有素材/声音样本/歌曲/产品/已有成片要改/想自己剪/多语言 → 各走哪些工具、别走哪条路)、' +
       'pipeline(10 步产线每步的工具、免费还是收费、哪道审查闸)、review_gates(三道免费硬闸规则)、' +
       'qa_tools(按客户描述的症状选检测工具与修法)、optional_boosts(可选增强及何时做)、billing(报价确认与免费族)、' +
-      'common_requests(客户常见原话 → 该做什么)。传 section 只取一段。' +
+      'common_requests(客户常见原话 → 该做什么)、' +
+      'local_postproduction(★客户要把镜头下载到**自己电脑**上剪 / 配乐 / 烧字幕 / 优化转场 / 补旁白时的完整流程:' +
+      '阶段顺序、执行位置、逐镜逐句怎么核对声音、什么才算验收完成)。传 section 只取一段。' +
       '★工具描述回答"这个工具做什么",本工具回答"什么情况下该用哪个"——客户交来的是成品分镜表却被 set_script→rewrite_script 改写成散文,就是没先看这张表。',
     {
       section: z.enum(GUIDE_SECTIONS).optional().describe('只取某一段;不传返回全部'),

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "StarReel Production API",
-    "version": "0.1.61",
-    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.61 tool surface (operationIds match MCP tool names 1:1)."
+    "version": "0.1.62",
+    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.62 tool surface (operationIds match MCP tool names 1:1)."
   },
   "servers": [
     {
@@ -3358,7 +3358,7 @@
       "get": {
         "operationId": "export_handoff_pack",
         "summary": "导出本集「素材交接包」清单:逐镜裸片 + 对白音轨 + 音效 + 配乐 + 字幕的可下载 URL,交给你在**自己那边**完成转场决策、拼接、混音、烧字幕——平台不参与终拼",
-        "description": "导出本集「素材交接包」清单:逐镜裸片 + 对白音轨 + 音效 + 配乐 + 字幕的可下载 URL,交给你在**自己那边**完成转场决策、拼接、混音、烧字幕——平台不参与终拼。免费,零扣费。\n\n【推荐流程】① 调本工具拿 manifest;② 按 clips[].url 把裸片下载到本地;③ 你自己看片判断每个接缝该用什么转场(manifest 给了 scene_boundary 场景边界作判据),写一份 plan.json;④ 用 get_handoff_toolchain 拿到 compile_timeline.py 展开时间轴、assemble.sh 装配出成片。工具链已经把「加了重叠转场之后字幕/对白/音效怎么跟着位移」算好了。\n\n【三个不看就会翻车的事实】\n① audio_contract.mode=\"tts\" 时**裸片里没有人声**,对白在 dialogue_audio 里;不铺就是整集没台词。mode=\"clip\" 时人声已烤在裸片音轨里,反过来**不要**再叠。\n② 每镜必须按 trim_head_ms / duration_ms 裁剪再用;直接拼整条裸片会把平台已经 QC 掉的首尾形变帧一起拼进去。\n③ 字幕 cue、dialogue_audio.offset_ms、sfx[].offset_ms 的基准都是「该镜 trim 之后的第 0 毫秒」,不是成片绝对时间。你加多少重叠转场都不用改它们——交给 compile_timeline.py 展开,别手算累加。\n\n想让平台代拼、要平台级质量闸(终拼预检/音画等长/响度母带),改用 compose_episode。",
+        "description": "导出本集「素材交接包」清单:逐镜裸片 + 对白音轨 + 音效 + 配乐 + 字幕的可下载 URL,交给你在**自己那边**完成转场决策、拼接、混音、烧字幕——平台不参与终拼。免费,零扣费。\n\n【推荐流程】① 调本工具拿 manifest;② 按 clips[].url 把裸片下载到本地;③ 你自己看片判断每个接缝该用什么转场(manifest 给了 scene_boundary 场景边界作判据),写一份 plan.json;④ 用 get_handoff_toolchain 拿到 compile_timeline.py 展开时间轴、assemble.sh 装配出成片。工具链已经把「加了重叠转场之后字幕/对白/音效怎么跟着位移」算好了。\n\n【三个不看就会翻车的事实】\n① **人声在哪要逐镜读 `shots[].voice_track.location`,不能读整集的 audio_contract.mode**——后者是整剧级声明,而全画外旁白镜的旁白是平台在完成侧混进裸片的,同一集里逐镜可以不同。四种取值各有各的处置:`separate_file`=对白在 dialogue_audio,不铺这镜就没台词;`baked_in_clip`=已在裸片音轨里,再叠一遍会双声;`missing`=**平台侧确认缺失**(旁白补偿失败),字幕还在但声音哪都没有——回平台重生成该镜,拉长转场掩盖不了;`unknown`=有台词却查不到来源,**必须试听裸片**再决定。★有字幕从来不等于有声音:字幕是逐句的,音频是逐镜的。`conflicts_with_contract=true` 的镜以实测为准,notes 里已按镜号点名。\n② 每镜必须按 trim_head_ms / duration_ms 裁剪再用;直接拼整条裸片会把平台已经 QC 掉的首尾形变帧一起拼进去。\n③ 字幕 cue、dialogue_audio.offset_ms、sfx[].offset_ms 的基准都是「该镜 trim 之后的第 0 毫秒」,不是成片绝对时间。你加多少重叠转场都不用改它们——交给 compile_timeline.py 展开,别手算累加。\n\n想让平台代拼、要平台级质量闸(终拼预检/音画等长/响度母带),改用 compose_episode。",
         "tags": [
           "episodes"
         ],

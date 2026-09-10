@@ -157,7 +157,9 @@ export const ENTRY_POINTS: EntryPoint[] = [
   {
     customer_has: '想自己剪:要逐镜素材包(裸片 / 对白轨 / 音效 / 配乐 / 字幕)',
     use: ['export_handoff_pack', 'get_handoff_toolchain', 'save_handoff_toolchain'],
-    note: '与 `compose_episode` 二选一。audio_contract.mode=tts 时裸片没有人声,对白轨单独发——漏掉整集是哑的。',
+    note: '与 `compose_episode` 二选一。★人声在哪要**逐镜**看 voice_track.location——整集的 audio_contract.mode 只是声明,' +
+      '不是逐镜真值(全画外旁白镜的旁白是平台在完成侧混进裸片的);逐句核对看 spoken_lines,有字幕不等于有声音。' +
+      '完整流程见 local_postproduction 段。',
   },
   {
     customer_has: '多语言发行',
@@ -313,6 +315,87 @@ export const COMMON_REQUESTS: CommonRequest[] = [
   { customer_says: '要配音 / 不要视频原声', do: '`update_project_settings` use_clip_audio=false → `assign_voices` → `generate_tts` → `compose_episode`。' },
 ]
 
+export interface PostProductionStage {
+  stage: string
+  do: string
+  /** 这一步最容易翻车的地方 */
+  gotcha?: string
+}
+
+/**
+ * v0.9.1371 — 本地后期引导:客户把镜头下载到**自己电脑**上剪。
+ * 与 `compose_episode` 二选一——那条是「平台替你拼、带平台级质量闸」,这条是「素材给你、你自己拼」。
+ * 不单开一个 guide 工具:入口越多,agent 越要先猜「该调哪个」。
+ */
+export const LOCAL_POSTPRODUCTION = {
+  when:
+    '客户要把镜头下载到自己电脑上剪、配乐、烧字幕、优化转场、做字卡、补旁白时走这条;' +
+    '想让平台代拼并要平台级质量闸(终拼预检 / 音画等长 / 响度母带)用 `compose_episode`。两条二选一。',
+  where_it_runs:
+    '★脚本与 ffmpeg 全部跑在**客户自己的机器**上,平台只发素材 URL 与工具链源码。' +
+    'manifest 里是远程 URL,不是服务器上的本地路径;`save_handoff_toolchain` 的 dir 也是客户机器上的绝对路径。' +
+    '别把服务器路径当成客户电脑上的路径,也别替客户声称"已经在本地跑完了"——真正执行的是客户那侧。',
+  tools: ['export_handoff_pack', 'save_handoff_toolchain', 'get_handoff_toolchain'],
+  stages: [
+    {
+      stage: '1 对需求',
+      do: '先问清:哪一集、目标时长、客户有没有自带配乐、字幕样式与排版要求。' +
+        '画幅、字幕样式这些项目里已经定过的,用 `get_drama` 读出来直接沿用——客户上一版确认过的偏好别每版重问。',
+    },
+    {
+      stage: '2 查环境',
+      do: '确认客户机器上有 ffmpeg(烧字幕要带 libass)、ffprobe、jq、python3,以及够放整集素材的磁盘。',
+      gotcha: '缺 libass 时字幕会**静默不烧**——成片看着正常,只是没有字幕。先查再跑,别等出片才发现。',
+    },
+    {
+      stage: '3 取包',
+      do: '`export_handoff_pack` 拿 manifest → `save_handoff_toolchain` 把三个脚本落到客户目录 → 跑 fetch_pack.py 下载素材并把内联字幕落成 SRT。',
+      gotcha: '素材 URL 到 expires_at 就失效;过期重新调 `export_handoff_pack`,别拿旧 manifest 硬跑。',
+    },
+    {
+      stage: '4 核声音',
+      do: '★动剪辑前先核对声音。**逐镜**读 voice_track.location 决定这镜该不该铺对白轨、能不能叠;' +
+        '**逐行**读 spoken_lines 逐句核对。location=unknown 的镜必须实际试听裸片。',
+      gotcha: '**有字幕不等于有声音**:字幕是逐句的、音频是逐镜的,粒度本来就对不上,' +
+        '别按「这镜有字幕」推定每句都有人念。voice_status=caption_no_voice 的行是字卡,本来就没有配音,不是缺失。',
+    },
+    {
+      stage: '5 判接缝',
+      do: '逐个接缝看前后画面,结合动作、景别、视线与声音选切点。scene_boundary="start" 是换场(适合给转场),' +
+        '"continue" 是同场景(平台默认硬切)。',
+      gotcha: '同场景逐镜叠化是"幻灯片拼凑感"的主因;缺失的交接动作**拉长叠化也补不出来**,该重生成就重生成。',
+    },
+    {
+      stage: '6 装配',
+      do: '先做代表性样段(字卡、混音各挑一两处)给客户看,再整集出片:compile_timeline.py 展开时间轴 → assemble.sh 装配。',
+      gotcha: '裁剪与重叠转场都会移动入点——字幕/对白/音效的绝对时间一律交给 compile_timeline.py 算,**别手算累加**。' +
+        '只改声音时保留视频码流(-c:v copy),别整片重编码。',
+    },
+    {
+      stage: '7 验收',
+      do: '看**真实成片**:画面、字幕位置、旁白完整性、每个接缝、峰值与音画同步。交付可播放文件 + 版本 + 检查结果。',
+      gotcha: '没做的试听或视觉检查要**明说没做**,不许默认通过。',
+    },
+  ] as PostProductionStage[],
+  voice_rules: [
+    'location=separate_file:对白在 dialogue_audio,必须自己铺轨,不铺这镜就没台词。',
+    'location=baked_in_clip:人声已在裸片音轨里,**再叠一遍是同一句说两遍**(全画外旁白镜最常见)。',
+    'location=missing:平台侧确认缺失。正解是回平台 `regenerate_shot_video` 重生成,或 `generate_tts` 补这句,' +
+      '音色复用已授权的克隆音(`list_voices` / `set_character_voice`),别在本地硬凑,也别拿转场掩盖。',
+    '人声与配乐分开控制:客户说"这句小一点"是调那句的对白轨增益,不是压整条 BGM;' +
+      '整体响度达标**不代表**每句都听得清。',
+    'clip.probed_has_audio_stream=false 表示平台实测这条裸片连音轨流都没有;反过来不成立——' +
+      '有音轨不代表有人声,全旁白镜的环境音本来就是要求厂商出的。',
+  ],
+  not_verified_until: [
+    '「素材下载完成」不是验收。',
+    '「脚本退出码 0 / 执行成功」不是验收——ffmpeg 跑完不等于成片对。',
+    '「自动转写通过」不等于试听过,别拿它冒充人工听过。',
+    '只有看过真实成片(画面 / 字幕位置 / 旁白完整 / 接缝 / 音画同步)才算验收完成;' +
+      '平台侧成片用 `get_final_cut` 取。',
+  ],
+}
+
 export const HOW_TO_READ =
   '先按 entry_points 判客户手上的材料该走哪条通道(这是最常被跳过的一步),再按 pipeline 顺序推进、每道 review_gates 必过;' +
   '收费步按 billing.quote_flow 报价确认;遇到质量投诉按 qa_tools 的 symptom 选检测工具先定病因。'
@@ -328,10 +411,11 @@ export function buildGuide() {
     optional_boosts: OPTIONAL_BOOSTS,
     billing: BILLING,
     common_requests: COMMON_REQUESTS,
+    local_postproduction: LOCAL_POSTPRODUCTION,
   }
 }
 export type GuideSection = Exclude<keyof ReturnType<typeof buildGuide>, 'version' | 'how_to_read'>
-export const GUIDE_SECTIONS = ['entry_points', 'pipeline', 'review_gates', 'qa_tools', 'optional_boosts', 'billing', 'common_requests'] as const
+export const GUIDE_SECTIONS = ['entry_points', 'pipeline', 'review_gates', 'qa_tools', 'optional_boosts', 'billing', 'common_requests', 'local_postproduction'] as const
 
 const head = (s: string) => /^[a-z][a-z0-9_]*/.exec(s.trim())?.[0] ?? null
 const inProse = (s: string | undefined) => [...(s ?? '').matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => m[1])
@@ -348,6 +432,11 @@ export function referencedTools(): string[] {
   for (const b of OPTIONAL_BOOSTS) { add(b.tool); inProse(b.when).forEach(add) }
   BILLING.tools.forEach(add)
   for (const c of COMMON_REQUESTS) inProse(c.do).forEach(add)
+  // v0.9.1371 — 本地后期段同样纳入哨兵:漏了这几行,这段引导就能悄悄指向不存在的工具。
+  LOCAL_POSTPRODUCTION.tools.forEach(add)
+  ;[LOCAL_POSTPRODUCTION.when, LOCAL_POSTPRODUCTION.where_it_runs].forEach((s) => inProse(s).forEach(add))
+  for (const s of LOCAL_POSTPRODUCTION.stages) { inProse(s.do).forEach(add); inProse(s.gotcha).forEach(add) }
+  for (const r of [...LOCAL_POSTPRODUCTION.voice_rules, ...LOCAL_POSTPRODUCTION.not_verified_until]) inProse(r).forEach(add)
   return [...out].sort()
 }
 

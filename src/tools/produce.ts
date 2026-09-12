@@ -1031,6 +1031,28 @@ export function registerProduceTools(server: McpServer, client: StarReelClient) 
     },
   )
   server.tool(
+    'upload_shot_footage',
+    '用**客户自有的整段视频**（录屏 / 产品实拍 / 第三方成片）直接当某镜的视频——实拍素材镜。' +
+      '登记后该镜不再 AI 出图/出视频（generate_videos 会跳过它,单镜重生会被拒),终拼原样使用,镜头时长按素材真实长度回写,' +
+      '首/尾帧从素材抽帧供帧链与预览用。免费。适用:宣传片里的到账界面录屏、后台大屏实录、产品实拍、客户已有的成片片段。' +
+      '⚠️ 别用它把外部 AI 生成的视频贴进来"改画面"——那不带本片身份锚/画风锚,人物·画风必漂;要改画面走 regenerate_shot_video。' +
+      '要换回 AI 生成请先 clear_shot_footage。',
+    {
+      storyboard_id: z.number().int().positive(),
+      file_path: z.string().describe('本地视频路径(mp4/mov/webm/m4v,≤300MB)'),
+    },
+    async ({ storyboard_id, file_path }) => {
+      const video_url = await client.uploadLocalFile(file_path, 'footage')
+      return jsonResult(await client.producePost(`/storyboards/${storyboard_id}/footage`, { video_url }))
+    },
+  )
+  server.tool(
+    'clear_shot_footage',
+    '清除某镜的实拍素材(video_url 置空、来源标记清掉),让这一镜恢复可 AI 生成视频。免费。',
+    { storyboard_id: z.number().int().positive() },
+    async ({ storyboard_id }) => jsonResult(await client.produceDelete(`/storyboards/${storyboard_id}/footage`)),
+  )
+  server.tool(
     'upload_scene_image',
     '用客户自有图片作为某场景的参考图。自动上传+登记。免费。',
     { scene_id: z.number().int().positive(), file_path: z.string().describe('本地场景图路径') },

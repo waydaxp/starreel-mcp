@@ -97,9 +97,10 @@ export const ENTRY_POINTS: EntryPoint[] = [
       'upload_scene_image',
       'upload_prop_sheet',
       'upload_shot_frame(只用于客户自有真实素材)',
+      'upload_shot_footage(客户自有整段视频当某镜成片:录屏/产品实拍/已有片段;登记后该镜不再 AI 出图出视频,终拼原样用,时长按素材回写;清除用 clear_shot_footage)',
     ],
     avoid: '要「改某一镜画面」走 `generate_shot_frame`(平台自动带该镜身份锚·场景道具参考·画风锚);别在外部工具画好再 `upload_shot_frame`——外部图没有任何锚,人物/服装/画风必漂。',
-    flow: 'upload_image · set_character_portrait · upload_scene_image · upload_prop_sheet · upload_shot_frame(仅客户自有素材;要改画面走 generate_shot_frame)',
+    flow: 'upload_image · set_character_portrait · upload_scene_image · upload_prop_sheet · upload_shot_frame(仅客户自有素材;要改画面走 generate_shot_frame) · upload_shot_footage(整段实拍/录屏当某镜成片)',
   },
   {
     customer_has: '自己的声音样本 / 指定音色',
@@ -229,7 +230,7 @@ export const PIPELINE: PipelineStep[] = [
   },
   {
     step: '8 出视频',
-    tools: ['quote_videos', 'generate_videos', 'get_scene_group_plan', 'generate_scene_groups', 'quote_regenerate_shot_video', 'regenerate_shot_video', 'quote_edit_video_shot', 'edit_video_shot', 'get_edit_capabilities'],
+    tools: ['quote_videos', 'generate_videos', 'get_scene_group_plan', 'generate_scene_groups', 'quote_regenerate_shot_video', 'regenerate_shot_video', 'quote_edit_video_shot', 'edit_video_shot', 'upload_shot_footage(实拍素材镜:客户录屏/产品实拍直接当该镜视频,不出视频不扣费)', 'get_edit_capabilities'],
     billing: '报价确认后扣点',
     note: 'video_engine 必须在出视频前定(seedance-2.5 默认 / hailuo-3 降本 / wan3.0 风格化·绝不用于写实真人);切换不回溯已生成镜头。',
   },

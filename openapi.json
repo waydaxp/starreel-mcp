@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "StarReel Production API",
-    "version": "0.1.62",
-    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.62 tool surface (operationIds match MCP tool names 1:1)."
+    "version": "0.1.63",
+    "description": "Turn a script into a finished, downloadable short-drama episode over REST.\n\nPipeline: script → AI rewrite → cast/scenes/props extraction → portraits & sheets → storyboards → keyframes → video shots → TTS → final cut (.mp4).\n\n**Billing is prepaid and agent-safe**: big-ticket stages are quote-then-generate (`quote_*` returns a `quote_id`; for video, quote == actual charge). Insufficient balance returns 402 — nothing half-runs and the account never goes negative.\n\nAuth: exchange your API key at `POST /v1/agent/token` for a 15-minute bearer token.\n\nGenerated from the @starreel/mcp v0.1.63 tool surface (operationIds match MCP tool names 1:1)."
   },
   "servers": [
     {
@@ -6612,6 +6612,53 @@
         }
       }
     },
+    "/storyboards/{storyboard_id}/footage": {
+      "delete": {
+        "operationId": "clear_shot_footage",
+        "summary": "清除某镜的实拍素材(video_url 置空、来源标记清掉),让这一镜恢复可 AI 生成视频",
+        "description": "清除某镜的实拍素材(video_url 置空、来源标记清掉),让这一镜恢复可 AI 生成视频。免费。",
+        "tags": [
+          "storyboards"
+        ],
+        "parameters": [
+          {
+            "name": "storyboard_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "StarReel envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "description": "Operation result payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient prepaid balance (never overdrafts); response carries `needed` points"
+          }
+        }
+      }
+    },
     "/storyboards/{storyboard_id}/frame/generate": {
       "post": {
         "operationId": "generate_shot_frame",
@@ -7534,6 +7581,10 @@
     },
     {
       "tool": "upload_shot_frame",
+      "reason": "unmappable: local file upload flow"
+    },
+    {
+      "tool": "upload_shot_footage",
       "reason": "unmappable: local file upload flow"
     },
     {
